@@ -115,6 +115,20 @@ async function main() {
         index_queues.push({type: 'table-userres', name: index_queue_prefix + "_table_userres"});
     }
 
+    // optional history tables
+    if (process.env.TRANSFERS_HISTORY === 'true') {
+        indicesList.push("table-transfers");
+        index_queues.push({type: 'table-transfers', name: index_queue_prefix + "_table_transfers"});
+    }
+    if (process.env.ALT_TRANSFERS_HISTORY === 'true') {
+        indicesList.push("table-alt-transfers");
+        index_queues.push({type: 'table-alt-transfers', name: index_queue_prefix + "_table_alt_transfers"});
+    }
+    if (process.env.VOTES_HISTORY === 'true') {
+        indicesList.push("table-votes");
+        index_queues.push({type: 'table-votes', name: index_queue_prefix + "_table_votes"});
+    }
+
     const indexConfig = require('./definitions/mappings');
 
     // Update index templates
