@@ -22,12 +22,6 @@ fastify.register(require('fastify-elasticsearch'), {
 
 fastify.register(require('fastify-redis'), {host: '127.0.0.1'});
 
-fastify.register(require('fastify-rate-limit'), {
-    max: 1000,
-    whitelist: [],
-    timeWindow: '1 minute',
-    redis: new Redis()
-});
 
 fastify.register(require('fastify-oas'), openApi.options);
 
