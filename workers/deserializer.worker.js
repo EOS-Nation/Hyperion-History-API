@@ -650,7 +650,7 @@ const actionHandlers = {
             if (!status) {
             }
             tbl_transfers_emit_idx++;
-            if (tbl_transfers_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+            if (tbl_transfers_emit_idx > n_ingestors_per_queue) {
                 tbl_transfers_emit_idx = 1;
             }
         }
@@ -680,7 +680,7 @@ const actionHandlers = {
             if (!status) {
             }
             tbl_transfers_emit_idx++;
-            if (tbl_transfers_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+            if (tbl_transfers_emit_idx > n_ingestors_per_queue) {
                 tbl_transfers_emit_idx = 1;
             }
         }
@@ -707,7 +707,7 @@ const actionHandlers = {
             if (!status) {
             }
             tbl_alt_transfers_emit_idx++;
-            if (tbl_alt_transfers_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+            if (tbl_alt_transfers_emit_idx > n_ingestors_per_queue) {
                 tbl_alt_transfers_emit_idx = 1;
             }
         }
@@ -842,7 +842,7 @@ async function storeVoter(data) {
                 // console.log('Voter Indexing:', status);
             }
             tbl_vote_emit_idx++;
-            if (tbl_vote_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+            if (tbl_vote_emit_idx > n_ingestors_per_queue) {
                 tbl_vote_emit_idx = 1;
             }
         }
@@ -853,7 +853,7 @@ async function storeVoter(data) {
                 // console.log('Voter Indexing:', status);
             }
             tbl_votes_emit_idx++;
-            if (tbl_votes_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+            if (tbl_votes_emit_idx > n_ingestors_per_queue) {
                 tbl_votes_emit_idx = 1;
             }
         }
@@ -882,7 +882,7 @@ async function storeAccount(data) {
             // console.log('Account Indexing:', status);
         }
         tbl_acc_emit_idx++;
-        if (tbl_acc_emit_idx > (n_ingestors_per_queue * action_indexing_ratio)) {
+        if (tbl_acc_emit_idx > n_ingestors_per_queue) {
             tbl_acc_emit_idx = 1;
         }
     }
