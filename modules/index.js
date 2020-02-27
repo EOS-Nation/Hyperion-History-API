@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const chainID = require('../connections.json').chains[process.env.CHAIN]['chain_id'];
+const chainID = require('/etc/hyperion/connections.json').chains[process.env.CHAIN]['chain_id'];
 
 class HyperionModuleLoader {
 

@@ -1,6 +1,6 @@
 let conf;
 try {
-    conf = require('../connections.json');
+    conf = require('/etc/hyperion/connections.json');
 } catch (e) {
     console.log(e);
     console.log(`Failed to parse connections.json!`);
