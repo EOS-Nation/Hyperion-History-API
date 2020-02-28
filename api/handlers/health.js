@@ -4,7 +4,7 @@ const {getLastIndexedBlock} = require("../../helpers/functions");
 const {ConnectionManager} = require('../../connections/manager');
 const manager = new ConnectionManager();
 
-const ecosystem = require('../../ecosystem.config');
+const ecosystem = require('/etc/hyperion/hyperion.config.js');
 
 function checkFeat(name) {
     if (currentENV) {
@@ -17,7 +17,7 @@ function checkFeat(name) {
 let currentENV;
 if (ecosystem.apps.length > 1) {
     const indexerApp = ecosystem.apps.find(app => {
-        return app.env.CHAIN === process.env.CHAIN && app.script === "./launcher.js";
+        return app.env.CHAIN === process.env.CHAIN && app.script === "/var/lib/hyperion/launcher.js";
     });
 
     if (indexerApp) {
