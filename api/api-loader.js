@@ -7,13 +7,6 @@ const manager = new ConnectionManager();
 const Redis = require('ioredis');
 const ioRedisClient = new Redis(manager.redisOptions.port, manager.redisOptions.host);
 
-const api_rate_limit = {
-    max: 1000,
-    whitelist: [],
-    timeWindow: '1 minute',
-    redis: ioRedisClient
-};
-
 const fastify = require('fastify')({ignoreTrailingSlash: true, trustProxy: true});
 
 if (process.env.ENABLE_WEBSOCKET === 'true') {
@@ -28,7 +21,6 @@ fastify.register(require('fastify-cors'));
 fastify.register(require('fastify-formbody'));
 fastify.register(require('fastify-redis'), manager.redisOptions);
 fastify.register(require('./plugins/eosjs'));
-fastify.register(require('fastify-rate-limit'), api_rate_limit);
 
 // Register fastify api routes
 const AutoLoad = require('fastify-autoload');
