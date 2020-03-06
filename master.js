@@ -132,7 +132,7 @@ function onLiveBlock(msg) {
 }
 
 function setupDSElogs(starting_block, head) {
-    const logPath = './logs/' + process.env.CHAIN;
+    const logPath = path.join(process.cwd(), 'logs', process.env.CHAIN);
     if (!fs.existsSync(logPath)) fs.mkdirSync(logPath, {recursive: true});
     const dsLogFileName = (new Date().toISOString()) + "_ds_err_" + starting_block + "_" + head + ".log";
     const dsErrorsLog = logPath + '/' + dsLogFileName;
@@ -141,7 +141,7 @@ function setupDSElogs(starting_block, head) {
     if (fs.existsSync(symbolicLink)) fs.unlinkSync(symbolicLink);
     fs.symlinkSync(dsLogFileName, symbolicLink);
     dsErrorStream = fs.createWriteStream(dsErrorsLog, {flags: 'a'});
-    console.log(`Deserialization errors are being logged in: ${path.join(__dirname, symbolicLink)}`);
+    console.log(`Deserialization errors are being logged in: ${symbolicLink}`);
 }
 
 async function initAbiCacheMap(getAsync) {
