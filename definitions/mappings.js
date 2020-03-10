@@ -1,5 +1,5 @@
 const shards = 2;
-const replicas = 0;
+const replicas = 1;
 const refresh = "1s";
 const chain = process.env.CHAIN;
 const defaultLifecyclePolicy = "50G30D";
