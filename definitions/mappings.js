@@ -1,4 +1,5 @@
 const shards = 2;
+const multiplier = 2;
 const replicas = 1;
 const refresh = "1s";
 const chain = process.env.CHAIN;
@@ -24,7 +25,7 @@ const action = {
             },
             codec: compression,
             refresh_interval: refresh,
-            number_of_shards: shards * 2,
+            number_of_shards: shards * multiplier,
             number_of_replicas: replicas,
             sort: {
                 field: "global_sequence",
@@ -318,7 +319,7 @@ const delta = {
                 "rollover_alias": chain + "-delta"
             },
             "codec": compression,
-            "number_of_shards": shards * 2,
+            "number_of_shards": shards * multiplier,
             "refresh_interval": refresh,
             "number_of_replicas": replicas
         }
