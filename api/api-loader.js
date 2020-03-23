@@ -25,8 +25,8 @@ fastify.register(require('./plugins/eosjs'));
 // Register fastify api routes
 const AutoLoad = require('fastify-autoload');
 const path = require('path');
-// fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'v1-history'), options: {prefix: '/v1/history'}});
-// fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'v1-chain'), options: {prefix: '/v1/chain'}});
+fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'v1-history'), options: {prefix: '/v1/history'}});
+fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'v1-chain'), options: {prefix: '/v1/chain'}});
 fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'history'), options: {prefix: '/v2/history'}});
 fastify.register(AutoLoad, {dir: path.join(__dirname, 'handlers', 'state'), options: {prefix: '/v2/state'}});
 fastify.register(require('./handlers/health'), {prefix: '/v2'});
