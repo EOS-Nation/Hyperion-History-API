@@ -1,5 +1,5 @@
 const actionExtras = new Map();
-const config = require(`../${process.env.CONFIG_JSON}`);
+const config = require(process.env.CONFIG_JSON);
 const chain = config.settings.chain;
 
 actionExtras.set(`${chain}"::eosio::newaccount`, (action) => {

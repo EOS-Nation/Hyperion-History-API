@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const config = require(`../${process.env.CONFIG_JSON}`);
-const chainID = require('../connections.json').chains[config.settings.chain]['chain_id'];
+const config = require(process.env.CONFIG_JSON);
+const chainID = require(path.join(process.env.CONFIG_DIR, 'connections.json')).chains[config.settings.chain]['chain_id'];
 
 class HyperionModuleLoader {
 

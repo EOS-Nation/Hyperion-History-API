@@ -9,7 +9,7 @@ const abieos = require('@eosrio/node-abieos');
 // const {Serialize} = require('eosjs');
 
 const zlib = require('zlib');
-const config = require(`../${process.env.CONFIG_JSON}`);
+const config = require(process.env.CONFIG_JSON);
 const CHAIN = config.settings.chain;
 
 function onError(err) {

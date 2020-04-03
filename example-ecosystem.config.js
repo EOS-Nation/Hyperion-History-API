@@ -2,7 +2,7 @@ const {addApiServer, addIndexer} = require("./definitions/ecosystem_settings");
 
 module.exports = {
     apps: [
-        addIndexer('eos'),
-        addApiServer('eos', 1)
+        addIndexer('eos', '/etc/hyperion'),
+        addApiServer('eos', '/etc/hyperion', 1)
     ]
 };

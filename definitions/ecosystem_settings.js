@@ -1,4 +1,4 @@
-function addIndexer(chainName) {
+function addIndexer(chainName, configDir) {
     return {
         script: "./launcher.js",
         name: chainName + "-indexer",
@@ -9,13 +9,14 @@ function addIndexer(chainName) {
         kill_timeout: 3600,
         time: true, // include timestamps in pm2 logs
         env: {
-            CONFIG_JSON: 'chains/' + chainName + '.config.json',
+            CONFIG_DIR: configDir,
+            CONFIG_JSON: path.join(configDir, 'chains', chainName + '.config.json'),
             TRACE_LOGS: 'false'
         }
     };
 }
 
-function addApiServer(chainName, threads) {
+function addApiServer(chainName, configDir, threads) {
     return {
         script: "./api/server.js",
         name: chainName + "-api",
@@ -28,7 +29,8 @@ function addApiServer(chainName, threads) {
         exp_backoff_restart_delay: 100,
         watch: ["api"],
         env: {
-            CONFIG_JSON: 'chains/' + chainName + '.config.json'
+            CONFIG_DIR: configDir,
+            CONFIG_JSON: path.join(configDir, 'chains', chainName + '.config.json'),
         }
     }
 }

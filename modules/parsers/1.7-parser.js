@@ -6,7 +6,7 @@ const {TextEncoder, TextDecoder} = require('util');
 const txDec = new TextDecoder();
 const txEnc = new TextEncoder();
 
-const config = require(`../../${process.env.CONFIG_JSON}`);
+const config = require(process.env.CONFIG_JSON);
 const chain = config.settings.chain;
 
 function checkBlacklist(act) {

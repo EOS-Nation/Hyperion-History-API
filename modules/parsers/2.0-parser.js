@@ -8,7 +8,7 @@ const txEnc = new TextEncoder();
 const {workerData, isMainThread, parentPort} = require('worker_threads');
 let config;
 if (isMainThread) {
-    config = require(`../../${process.env.CONFIG_JSON}`);
+    config = require(process.env.CONFIG_JSON);
 } else {
     config = workerData.globalConfig;
 }

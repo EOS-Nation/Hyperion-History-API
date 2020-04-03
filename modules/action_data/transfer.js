@@ -1,4 +1,4 @@
-const config = require(`../../${process.env.CONFIG_JSON}`);
+const config = require(process.env.CONFIG_JSON);
 
 const hyperionModule = {
     chain: "*",
