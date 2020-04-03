@@ -1,6 +1,6 @@
 function addIndexer(chainName, configDir) {
     return {
-        script: "./launcher.js",
+        script: "/var/lib/hyperion/launcher.js",
         name: chainName + "-indexer",
         namespace: chainName,
         interpreter: 'node',
@@ -18,7 +18,7 @@ function addIndexer(chainName, configDir) {
 
 function addApiServer(chainName, configDir, threads) {
     return {
-        script: "./api/server.js",
+        script: "/var/lib/hyperion/api/server.js",
         name: chainName + "-api",
         namespace: chainName,
         node_args: ["--trace-deprecation"],
