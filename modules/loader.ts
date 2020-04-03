@@ -59,7 +59,7 @@ export class HyperionModuleLoader {
     }
 
     loadActionHandlers() {
-        const files = readdirSync('modules/action_data/');
+        const files = readdirSync(join(__dirname, 'action_data'));
         for (const plugin of files) {
             const _module = require(join(__dirname, 'action_data', plugin)).hyperionModule;
             if (_module.parser_version.includes(this.config.settings.parser)) {

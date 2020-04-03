@@ -1,7 +1,7 @@
 import {existsSync, readFileSync} from "fs";
 import {HyperionConnections} from "../interfaces/hyperionConnections";
 import {HyperionConfig} from "../interfaces/hyperionConfig";
-import path from "path";
+import {join} from "path";
 
 export interface Filters {
     action_blacklist: Set<string>;
@@ -94,7 +94,7 @@ export class ConfigurationModule {
     }
 
     loadConnectionsJson() {
-        const file = path.join(process.env.CONFIG_DIR, 'connections.json');
+        const file = join(process.env.CONFIG_DIR, 'connections.json');
         if (existsSync(file)) {
             const data = readFileSync(file).toString();
             try {
@@ -105,7 +105,7 @@ export class ConfigurationModule {
                 process.exit(1);
             }
         } else {
-            console.log(path.join(process.env.CONFIG_DIR, 'connections.json') + ' not found!');
+            console.log(join(process.env.CONFIG_DIR, 'connections.json') + ' not found!');
             process.exit(1);
         }
     }
