@@ -4,10 +4,19 @@ import * as AbiEOS from "@eosrio/node-abieos";
 import {Serialize} from "../addons/eosjs-native";
 import {hLog} from "../helpers/common_functions";
 import {Message} from "amqplib";
+import {parseDSPEvent} from "../modules/custom/dsp-parser";
+import {resolve, join} from "path";
+import {readdirSync, existsSync, readFileSync} from "fs";
 
 const abi_remapping = {
     "_Bool": "bool"
 };
+
+interface CustomAbiDef {
+    abi: string;
+    startingBlock: number;
+    endingBlock: number;
+}
 
 export default class DSPoolWorker extends HyperionWorker {
 
@@ -29,6 +38,8 @@ export default class DSPoolWorker extends HyperionWorker {
     contracts = new Map();
     monitoringLoop: NodeJS.Timeout;
     actionDsCounter = 0;
+
+    customAbiMap: Map<string, CustomAbiDef[]> = new Map();
 
     constructor() {
         super();
@@ -61,10 +72,48 @@ export default class DSPoolWorker extends HyperionWorker {
             }
         }, 1);
 
+        this.processCustomABI();
+
         // Define Common Functions
         this.common = {
             attachActionExtras: this.attachActionExtras,
             deserializeActionAtBlockNative: this.deserializeActionAtBlockNative
+        }
+    }
+
+    processCustomABI() {
+        if (this.conf.settings.allow_custom_abi) {
+
+            if (!this.customAbiMap) {
+                this.customAbiMap = new Map<string, CustomAbiDef[]>();
+            }
+
+            const dir = join(resolve(), "custom-abi", this.chain);
+            if (existsSync(dir)) {
+                const files = readdirSync(dir);
+                for (const abiFile of files) {
+                    try {
+                        const [code, startingBlock, suffix] = abiFile.split("-");
+                        const endingBlock = suffix.split(".")[0];
+                        hLog(`Custom ABI for ${code} from ${startingBlock} up to ${endingBlock}`);
+                        const parsedAbi = readFileSync(join(dir, abiFile)).toString();
+                        const def: CustomAbiDef = {
+                            abi: parsedAbi,
+                            startingBlock: parseInt(startingBlock),
+                            endingBlock: parseInt(endingBlock)
+                        };
+
+                        if (!this.customAbiMap.has(code)) {
+                            this.customAbiMap.set(code, [def]);
+                        } else {
+                            this.customAbiMap.get(code).push(def);
+                        }
+
+                    } catch (e) {
+                        hLog(e);
+                    }
+                }
+            }
         }
     }
 
@@ -131,24 +180,42 @@ export default class DSPoolWorker extends HyperionWorker {
             _status = false;
         }
         if (!_status) {
-            const savedAbi = await this.fetchAbiHexAtBlockElastic(contract, block_num, false);
-            if (savedAbi) {
-                if (savedAbi[field + 's'].includes(type)) {
-                    if (savedAbi.abi_hex) {
-                        _status = AbiEOS.load_abi_hex(contract, savedAbi.abi_hex);
+
+            if (this.conf.settings.allow_custom_abi) {
+                if (this.customAbiMap.has(contract)) {
+                    const list = this.customAbiMap.get(contract);
+                    const matchingAbi = list.find(entry => {
+                        return entry.startingBlock < block_num && entry.endingBlock > block_num;
+                    });
+                    if (matchingAbi.abi) {
+                        _status = AbiEOS.load_abi(contract, matchingAbi.abi);
                     }
-                    if (_status) {
-                        try {
-                            resultType = AbiEOS['get_type_for_' + field](contract, type);
-                            _status = true;
-                            return [_status, resultType];
-                        } catch (e) {
-                            hLog(`(abieos/cached) >> ${e.message}`);
-                            _status = false;
+                }
+            }
+
+
+            if (!_status) {
+                const savedAbi = await this.fetchAbiHexAtBlockElastic(contract, block_num, false);
+                if (savedAbi) {
+                    if (savedAbi[field + 's'].includes(type)) {
+                        if (savedAbi.abi_hex) {
+                            _status = AbiEOS.load_abi_hex(contract, savedAbi.abi_hex);
                         }
                     }
                 }
             }
+
+            if (_status) {
+                try {
+                    resultType = AbiEOS['get_type_for_' + field](contract, type);
+                    _status = true;
+                    return [_status, resultType];
+                } catch (e) {
+                    hLog(`(abieos/cached) >> ${e.message}`);
+                    _status = false;
+                }
+            }
+
             const currentAbi = await this.rpc.getRawAbi(contract);
             if (currentAbi.abi.byteLength > 0) {
                 const abi_hex = Buffer.from(currentAbi.abi).toString('hex');
@@ -161,7 +228,7 @@ export default class DSPoolWorker extends HyperionWorker {
                     resultType = AbiEOS['get_type_for_' + field](contract, type);
                     _status = true;
                 } catch (e) {
-                    hLog(`(abieos/current) >> ${e.message}`);
+                    // hLog(`(abieos/current) >> ${e.message}`);
                     _status = false;
                 }
             }
@@ -339,10 +406,13 @@ export default class DSPoolWorker extends HyperionWorker {
                 net_usage_words,
                 ts
             };
+
             const usageIncluded = {
                 status: false
             };
+
             for (const action_trace of action_traces) {
+
                 if (action_trace[0] === 'action_trace_v0') {
                     const ds_status = await this.mLoader.parser.parseAction(this, ts, action_trace[1], trx_data, _actDataArray, _processedTraces, transaction_trace, usageIncluded);
                     if (ds_status) {
@@ -350,13 +420,28 @@ export default class DSPoolWorker extends HyperionWorker {
                         action_count++;
                     }
                 }
+
+                // abort processing after reaching the maximum inline indexing limit
+                if (this.conf.indexer.max_inline && (_processedTraces.length >= this.conf.indexer.max_inline)) {
+                    break;
+                }
             }
+
             const _finalTraces = [];
             if (_processedTraces.length > 1) {
                 const act_digests = {};
 
                 // collect digests & receipts
                 for (const _trace of _processedTraces) {
+
+                    if (this.conf.settings.dsp_parser) {
+                        if (_trace.console !== '') {
+                            await parseDSPEvent(this, _trace);
+                        }
+                    } else {
+                        delete _trace.console;
+                    }
+
                     if (act_digests[_trace.receipt.act_digest]) {
                         act_digests[_trace.receipt.act_digest].push(_trace.receipt);
                     } else {
@@ -478,6 +563,7 @@ export default class DSPoolWorker extends HyperionWorker {
                         data: this.contractUsage,
                         total_hits: this.totalHits
                     });
+                    // hLog(`${this.local_queue} ->> ${this.actionDsCounter} actions`);
                     process.send({
                         event: 'ds_report',
                         actions: this.actionDsCounter
@@ -510,6 +596,11 @@ export default class DSPoolWorker extends HyperionWorker {
                 durable: true
             });
             this.initConsumer();
+        }
+        if (this.conf.settings.dsp_parser) {
+            this.ch.assertQueue(`${queue_prefix}:dsp`, {
+                durable: true
+            });
         }
     }
 

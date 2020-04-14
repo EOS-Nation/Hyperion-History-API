@@ -529,9 +529,16 @@ export class HyperionMaster {
                     }
                 }
             }
-            hLog(' |>> First Block: ' + this.starting_block);
-            hLog(' >>| Last  Block: ' + this.head);
+        } else {
+            // Auto Mode
+            if (this.conf.indexer.abi_scan_mode) {
+                hLog(`Last indexed ABI: ${this.lastIndexedABI}`);
+                this.starting_block = this.lastIndexedABI;
+            }
         }
+        // print results
+        hLog(' |>> First Block: ' + this.starting_block);
+        hLog(' >>| Last  Block: ' + this.head);
     }
 
     private static printWorkerMap(wmp) {
@@ -1158,7 +1165,6 @@ export class HyperionMaster {
     }
 
     private onScheduleUpdate(msg: any) {
-        hLog(msg);
         if (msg.live === 'true') {
             hLog(`Producer schedule updated at block ${msg.block_num}. Waiting version update...`);
             this.proposedSchedule = msg.new_producers;
@@ -1278,10 +1284,10 @@ export class HyperionMaster {
         let lastIndexedBlock;
         if (this.conf.features.index_deltas) {
             lastIndexedBlock = await getLastIndexedBlockByDelta(this.client, queue_prefix);
-            hLog('Last indexed block (deltas):', lastIndexedBlock);
+            hLog(`Last indexed block (deltas): ${lastIndexedBlock}`);
         } else {
             lastIndexedBlock = await getLastIndexedBlock(this.client, queue_prefix);
-            hLog('Last indexed block (blocks):', lastIndexedBlock);
+            hLog(`Last indexed block (blocks): ${lastIndexedBlock}`);
         }
 
         // Start from the last indexed block
@@ -1355,6 +1361,10 @@ export class HyperionMaster {
         this.startContractMonitoring();
         this.monitorIndexingQueues();
         this.onPm2Stop();
+
+        pm2io.action('get_usage_map', (reply) => {
+            reply(this.globalUsageMap);
+        });
 
         pm2io.action('get_heap', (reply) => {
             const requests = [];

@@ -8,7 +8,7 @@ export interface ScalingConfigs {
     indexing_queues: number;
     ad_idx_queues: number;
     "max_autoscale": number;
-    "auto_scale_trigger": number;s
+    "auto_scale_trigger": number;
 }
 
 export interface MainSettings {
@@ -23,6 +23,8 @@ export interface MainSettings {
     debug: boolean;
     rate_monitoring: boolean;
     bp_logs: boolean;
+    dsp_parser: boolean;
+    allow_custom_abi: boolean;
 }
 
 export interface IndexerConfigs {
@@ -39,6 +41,7 @@ export interface IndexerConfigs {
     disable_indexing: boolean;
     process_deltas: boolean;
     repair_mode: boolean;
+    max_inline: number;
 }
 
 interface ApiLimits {

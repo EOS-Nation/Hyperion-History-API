@@ -29,7 +29,7 @@ export function extendResponseSchema(responseProps: any) {
     };
 }
 
-export function extendQueryStringSchema(queryParams: any) {
+export function extendQueryStringSchema(queryParams: any, required?: string[]) {
     const params = {
         limit: {
             description: 'limit of [n] results per page',
@@ -47,10 +47,14 @@ export function extendQueryStringSchema(queryParams: any) {
             params[p] = queryParams[p];
         }
     }
-    return {
+    const schema = {
         type: 'object',
         properties: params
     }
+    if (required && required.length > 0) {
+        schema["required"] = required;
+    }
+    return schema;
 }
 
 export async function getCacheByHash(redis, key, chain) {
@@ -82,12 +86,8 @@ export function mergeDeltaMeta(delta: any) {
 
 export function setCacheByHash(fastify, hash, response) {
     if (fastify.manager.config.api.enable_caching) {
-        fastify.redis
-            .set(hash,
-                JSON.stringify(response),
-                'EX',
-                fastify.manager.config.api.cache_life)
-            .catch(console.log);
+        const exp = fastify.manager.config.api.cache_life;
+        fastify.redis.set(hash, JSON.stringify(response), 'EX', exp).catch(console.log);
     }
 }
 
@@ -135,8 +135,10 @@ export function getTrackTotalHits(query) {
         } else if (query.track === 'false') {
             trackTotalHits = false;
         } else {
-            trackTotalHits = parseInt(query.track, 10);
-            if (isNaN(trackTotalHits)) {
+            const parsed = parseInt(query.track, 10);
+            if (parsed > 0) {
+                trackTotalHits = parsed;
+            } else {
                 throw new Error('failed to parse track param');
             }
         }
