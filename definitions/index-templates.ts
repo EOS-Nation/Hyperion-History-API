@@ -1,3 +1,4 @@
+// @ts-ignore
 import {ConfigurationModule} from "/var/lib/hyperion/modules/config";
 
 const shards = 2;
