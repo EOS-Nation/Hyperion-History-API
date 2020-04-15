@@ -1252,8 +1252,7 @@ export class HyperionMaster {
             }
         ];
 
-        // @ts-ignore
-        const indexConfig = await import('/etc/hyperion/definitions/index-templates');
+        const indexConfig = await import('../definitions/index-templates');
 
         const indicesList = [
             {name: "action", type: "action"},

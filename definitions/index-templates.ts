@@ -1,5 +1,4 @@
-// @ts-ignore
-import {ConfigurationModule} from "/var/lib/hyperion/modules/config";
+import {ConfigurationModule} from "../modules/config";
 
 const shards = 2;
 const replicas = 0;
