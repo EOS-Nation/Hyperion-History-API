@@ -51,27 +51,39 @@ class HyperionApiServer {
             } : false
         });
         this.fastify.decorate('manager', this.manager);
-        const ioRedisClient = new Redis(this.manager.conn.redis);
-        const api_rate_limit = {
-            max: 1000,
-            whitelist: [],
-            timeWindow: '1 minute',
-            redis: ioRedisClient
-        };
 
         if (this.conf.features.streaming.enable) {
             this.activateStreaming();
         }
 
-        registerPlugins(this.fastify, {
-            fastify_elasticsearch: {
-                client: this.manager.elasticsearchClient
-            },
-            fastify_oas: generateOpenApiConfig(this.manager.config),
-            fastify_rate_limit: api_rate_limit,
-            fastify_redis: this.manager.conn.redis,
-            fastify_eosjs: this.manager,
-        });
+        if (this.conf.api.api_rate_limit.enabled) {
+            const ioRedisClient = new Redis(this.manager.conn.redis);
+            const api_rate_limit = {
+                max: this.conf.api.api_rate_limit.max || 1000,
+                whitelist: this.conf.api.api_rate_limit.whitelist || [],
+                timeWindow: this.conf.api.api_rate_limit.timeWindow || '1 minute',
+                redis: ioRedisClient
+            };
+
+            registerPlugins(this.fastify, {
+                fastify_elasticsearch: {
+                    client: this.manager.elasticsearchClient
+                },
+                fastify_oas: generateOpenApiConfig(this.manager.config),
+                fastify_rate_limit: api_rate_limit,
+                fastify_redis: this.manager.conn.redis,
+                fastify_eosjs: this.manager,
+            });
+        } else {
+            registerPlugins(this.fastify, {
+                fastify_elasticsearch: {
+                    client: this.manager.elasticsearchClient
+                },
+                fastify_oas: generateOpenApiConfig(this.manager.config),
+                fastify_redis: this.manager.conn.redis,
+                fastify_eosjs: this.manager,
+            });
+        }
 
         registerRoutes(this.fastify);
 

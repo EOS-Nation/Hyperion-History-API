@@ -44,6 +44,13 @@ export interface IndexerConfigs {
     max_inline: number;
 }
 
+interface ApiRateLimit {
+    enabled: boolean;
+    max?: number;
+    whitelist?: [];
+    timeWindow?: string;
+}
+
 interface ApiLimits {
     get_links?: number;
     get_actions?: number;
@@ -69,7 +76,8 @@ interface ApiConfigs {
     chain_logo_url: string;
     enable_caching: boolean,
     cache_life: number;
-    limits: ApiLimits
+    api_rate_limit: ApiRateLimit;
+    limits: ApiLimits;
 }
 
 export interface HyperionConfig {

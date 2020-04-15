@@ -9,6 +9,12 @@
     "chain_logo_url": "",
     "enable_caching": true,
     "cache_life": 1,
+    "api_rate_limit": {
+      "enabled": true,
+      "max": 1000,
+      "whiltelist": [],
+      "timeWindow": "1 minute"
+    },
     "limits": {
       "get_actions": 1000,
       "get_voters": 100,
