@@ -73,6 +73,14 @@
     "process_deltas": true,
     "max_inline": 20
   },
+  "indices": {
+    "shards": 2,
+    "replicas": 1,
+    "multiplier": 2,
+    "refresh": "1s",
+    "lifecycle_policy": "50G30D",
+    "compression": "best_compression"
+  },
   "features": {
     "streaming": {
       "enable": false,
