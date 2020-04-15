@@ -1,6 +1,9 @@
+var path = require("path");
+
 function addIndexer(chainName, configDir) {
     return {
         script: "/var/lib/hyperion/launcher.js",
+        cwd: "/home/pm2/hyperion",
         name: chainName + "-indexer",
         namespace: chainName,
         interpreter: 'node',
@@ -19,6 +22,7 @@ function addIndexer(chainName, configDir) {
 function addApiServer(chainName, configDir, threads) {
     return {
         script: "/var/lib/hyperion/api/server.js",
+        cwd: "/home/pm2/hyperion",
         name: chainName + "-api",
         namespace: chainName,
         node_args: ["--trace-deprecation"],

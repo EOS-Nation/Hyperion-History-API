@@ -273,7 +273,7 @@ export class HyperionMaster {
     }
 
     printMode() {
-        const package_json = JSON.parse(readFileSync('./package.json').toString());
+        const package_json = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json')).toString());
         hLog(`--------- Hyperion Indexer ${package_json.version} ---------`);
         hLog(`Using parser version ${this.conf.settings.parser}`);
         hLog(`Chain: ${this.conf.settings.chain}`);
