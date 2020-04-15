@@ -1,19 +1,20 @@
 import {ConfigurationModule} from "../modules/config";
 
-const shards = 2;
-const replicas = 0;
-const refresh = "1s";
-const defaultLifecyclePolicy = "50G30D";
+const cm = new ConfigurationModule();
+const chain = cm.config.settings.chain;
 
-export * from './index-lifecycle-policies';
+const shards = cm.config.indices.shards;
+const replicas = cm.config.indices.replicas;
+const refresh = cm.config.indices.refresh;
+const multiplier = cm.config.indices.multiplier;
+const defaultLifecyclePolicy = cm.config.indices.lifecycle_policy;
 
 // LZ4 Compression
 // const compression = 'default';
 // DEFLATE
-const compression = "best_compression";
+const compression = cm.config.indices.compression;
 
-const cm = new ConfigurationModule();
-const chain = cm.config.settings.chain;
+export * from './index-lifecycle-policies';
 
 export const action = {
     order: 0,
@@ -28,7 +29,7 @@ export const action = {
             },
             codec: compression,
             refresh_interval: refresh,
-            number_of_shards: shards * 2,
+            number_of_shards: shards * multiplier,
             number_of_replicas: replicas,
             sort: {
                 field: "global_sequence",
@@ -242,7 +243,7 @@ export const delta = {
                 "rollover_alias": chain + "-delta"
             },
             "codec": compression,
-            "number_of_shards": shards * 2,
+            "number_of_shards": shards * multiplier,
             "refresh_interval": refresh,
             "number_of_replicas": replicas
         }

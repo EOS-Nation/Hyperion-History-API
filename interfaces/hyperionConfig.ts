@@ -44,6 +44,15 @@ export interface IndexerConfigs {
     max_inline: number;
 }
 
+export interface IndicesConfigs {
+    shards: number;
+    replicas: number;
+    multiplier: number;
+    refresh: string;
+    lifecycle_policy: string;
+    compression: string;
+}
+
 interface ApiLimits {
     get_links?: number;
     get_actions?: number;
@@ -76,6 +85,7 @@ export interface HyperionConfig {
     settings: MainSettings;
     scaling: ScalingConfigs;
     indexer: IndexerConfigs;
+    indices: IndicesConfigs;
 
     api: ApiConfigs;
 
