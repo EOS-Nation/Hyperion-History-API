@@ -9,9 +9,9 @@ import {registerPlugins} from "./plugins";
 import {AddressInfo} from "net";
 import {registerRoutes} from "./routes";
 import {generateOpenApiConfig} from "./config/open_api";
-import {createWriteStream} from "fs";
+import {createWriteStream, existsSync, mkdirSync} from "fs";
 import {SocketManager} from "./socketManager";
-import path from "path";
+import {join} from "path";
 
 class HyperionApiServer {
 
@@ -29,7 +29,9 @@ class HyperionApiServer {
         this.manager = new ConnectionManager(cm);
         this.manager.calculateServerHash();
         this.manager.getHyperionVersion();
-        const logStream = createWriteStream(path.join(process.cwd(), 'logs', this.chain, 'api.access.log'));
+        const logPath = join(process.cwd(), 'logs', this.chain);
+        if (!existsSync(logPath)) mkdirSync(logPath, {recursive: true});
+        const logStream = createWriteStream(join(logPath, 'api.access.log'));
         this.fastify = Fastify({
             ignoreTrailingSlash: false, trustProxy: true, logger: this.conf.api.access_log ? {
                 stream: logStream,

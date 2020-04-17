@@ -678,7 +678,7 @@ export class HyperionMaster {
     }
 
     setupDSElogs() {
-        const logPath = path.join(path.resolve(), 'logs', this.chain);
+        const logPath = path.join(process.cwd(), 'logs', this.chain);
         if (!existsSync(logPath)) mkdirSync(logPath, {recursive: true});
         const dsLogFileName = (new Date().toISOString()) + "_ds_err_" + this.starting_block + "_" + this.head + ".log";
         const dsErrorsLog = logPath + '/' + dsLogFileName;
