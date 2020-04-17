@@ -11,6 +11,7 @@ import {registerRoutes} from "./routes";
 import {generateOpenApiConfig} from "./config/open_api";
 import {createWriteStream} from "fs";
 import {SocketManager} from "./socketManager";
+import path from "path";
 
 class HyperionApiServer {
 
@@ -28,7 +29,7 @@ class HyperionApiServer {
         this.manager = new ConnectionManager(cm);
         this.manager.calculateServerHash();
         this.manager.getHyperionVersion();
-        const logStream = createWriteStream('./logs/' + this.chain + '/api.access.log');
+        const logStream = createWriteStream(path.join(process.cwd(), 'logs', this.chain, 'api.access.log'));
         this.fastify = Fastify({
             ignoreTrailingSlash: false, trustProxy: true, logger: this.conf.api.access_log ? {
                 stream: logStream,
