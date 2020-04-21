@@ -71,6 +71,7 @@ interface ApiLimits {
     get_tokens?: number;
     get_transfers?: number;
     get_voters?: number;
+    get_trx_actions?: number;
 }
 
 interface ApiConfigs {
