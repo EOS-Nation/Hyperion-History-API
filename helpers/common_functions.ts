@@ -1,7 +1,7 @@
 import {ApiResponse, Client} from "@elastic/elasticsearch";
 import {Serialize} from "../addons/eosjs-native";
 
-const config = require(`../${process.env.CONFIG_JSON}`);
+const config = require(`${process.env.CONFIG_JSON}`);
 const CHAIN = config.settings.chain;
 
 function getLastResult(results: ApiResponse) {
