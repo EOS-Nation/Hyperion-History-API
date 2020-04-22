@@ -35,6 +35,7 @@ import {HyperionWorkerDef} from "../interfaces/hyperionWorkerDef";
 import {HyperionConfig} from "../interfaces/hyperionConfig";
 import moment = require("moment");
 import Timeout = NodeJS.Timeout;
+import { join } from "path";
 
 export class HyperionMaster {
 
@@ -1043,7 +1044,7 @@ export class HyperionMaster {
                     // TODO: check last indexed block, print to console and save on a temporary file
                     getLastIndexedBlockFromRange(this.client, this.chain, this.starting_block, this.head).then((lastblock) => {
                         hLog(`Last Indexed Block: ${lastblock}`);
-                        writeFileSync(`./chains/.${this.chain}_lastblock.txt`, lastblock.toString());
+                        writeFileSync(join(process.cwd(), 'chains', `${this.chain}_lastblock.txt`), lastblock.toString());
                         hLog('Shutting down master...');
                         process.exit(1);
                     });
