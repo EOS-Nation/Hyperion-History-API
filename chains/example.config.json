@@ -29,7 +29,8 @@
     "rate_monitoring": true,
     "bp_logs": false,
     "bp_monitoring": false,
-    "ipc_debug_rate": 2000
+    "ipc_debug_rate": 60000,
+    "allow_custom_abi": false
   },
   "blacklists": {
     "actions": [],
@@ -64,7 +65,7 @@
     "disable_reading": false,
     "disable_indexing": false,
     "process_deltas": true,
-    "repair_mode": false
+    "max_inline": 20
   },
   "features": {
     "streaming": {
@@ -87,8 +88,5 @@
     "read": 50,
     "block": 100,
     "index": 500
-  },
-  "experimental": {
-    "PATCHED_SHIP": false
   }
 }

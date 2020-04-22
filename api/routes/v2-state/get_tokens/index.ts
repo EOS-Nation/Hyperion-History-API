@@ -1,21 +1,20 @@
 import {FastifyInstance} from "fastify";
-import {addApiRoute, getRouteName} from "../../../helpers/functions";
+import {addApiRoute, extendQueryStringSchema, getRouteName} from "../../../helpers/functions";
 import {getTokensHandler} from "./get_tokens";
 
 export default function (fastify: FastifyInstance, opts: any, next) {
     const schema = {
         description: 'get account data',
         summary: 'get account summary',
-        tags: ['accounts', 'state'],
-        querystring: {
-            type: 'object',
-            properties: {
-                "account": {
-                    description: 'account name',
-                    type: 'string'
-                }
+        tags: ['accounts'],
+        querystring: extendQueryStringSchema({
+            "account": {
+                description: 'account name',
+                type: 'string',
+                minLength: 1,
+                maxLength: 12
             }
-        }
+        }, ["account"])
     };
     addApiRoute(
         fastify,

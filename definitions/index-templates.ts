@@ -58,6 +58,9 @@ export const action = {
             "trx_id": {"type": "keyword"},
             "producer": {"type": "keyword"},
             "notified": {"type": "keyword"},
+            "inline_count": {"type": "short"},
+            "max_inline": {"type": "short"},
+            "inline_filtered": {"type": "boolean"},
             "receipts": {
                 "properties": {
                     "global_sequence": {"type": "long"},
@@ -218,6 +221,8 @@ export const block = {
         "properties": {
             "@timestamp": {"type": "date"},
             "block_num": {"type": "long"},
+            "block_id": {"type": "keyword"},
+            "prev_id": {"type": "keyword"},
             "producer": {"type": "keyword"},
             "new_producers.producers.block_signing_key": {"enabled": false},
             "new_producers.producers.producer_name": {"type": "keyword"},

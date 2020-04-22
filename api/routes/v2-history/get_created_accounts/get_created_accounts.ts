@@ -1,17 +1,17 @@
-const {getCreatedAccountsSchema} = require("../../schemas");
-const {getCacheByHash} = require("../../helpers/functions");
+import {FastifyInstance, FastifyReply, FastifyRequest} from "fastify";
+import {ServerResponse} from "http";
+import {timedQuery} from "../../../helpers/functions";
+import {getSkipLimit} from "../get_actions/functions";
 
-const route = '/get_created_accounts';
+async function getCreatedAccounts(fastify: FastifyInstance, request: FastifyRequest) {
 
-async function getCreatedAccounts(fastify, request) {
-    const t0 = Date.now();
-    const {redis, elastic} = fastify;
-    const [cachedResponse, hash] = await getCacheByHash(redis, JSON.stringify(request.query));
-    if (cachedResponse) {
-        return cachedResponse;
-    }
-    const results = await elastic['search']({
-        "index": process.env.CHAIN + '-action-*',
+
+    const {skip, limit} = getSkipLimit(request.query);
+    const maxActions = fastify.manager.config.api.limits.get_created_accounts;
+    const results = await fastify.elastic.search({
+        "index": fastify.manager.chain + '-action-*',
+        "from": skip || 0,
+        "size": (limit > maxActions ? maxActions : limit) || 100,
         "body": {
             "query": {
                 "bool": {
@@ -27,9 +27,9 @@ async function getCreatedAccounts(fastify, request) {
             }
         }
     });
-    const response = {
-        "accounts": []
-    };
+
+    const response = {accounts: []};
+
     if (results['body']['hits']['hits'].length > 0) {
         const actions = results['body']['hits']['hits'];
         for (let action of actions) {
@@ -47,16 +47,12 @@ async function getCreatedAccounts(fastify, request) {
             response.accounts.push(_tmp);
         }
     }
-    response['query_time'] = Date.now() - t0;
-    redis.set(hash, JSON.stringify(response), 'EX', 30);
+
     return response;
 }
 
-module.exports = function (fastify, opts, next) {
-    fastify.get(route, {
-        schema: getCreatedAccountsSchema.GET
-    }, async (request) => {
-        return await getCreatedAccounts(fastify, request);
-    });
-    next()
-};
+export function getCreatedAccountsHandler(fastify: FastifyInstance, route: string) {
+    return async (request: FastifyRequest, reply: FastifyReply<ServerResponse>) => {
+        reply.send(await timedQuery(getCreatedAccounts, fastify, request, route));
+    }
+}
