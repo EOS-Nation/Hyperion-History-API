@@ -154,7 +154,7 @@ export class HyperionMaster {
                 } else {
                     // LIVE READER
                     this.liveConsumedBlocks++;
-                    if (this.conf.settings.bp_monitoring) {
+                    if (this.conf.settings.bp_monitoring && !this.conf.indexer.abi_scan_mode) {
                         this.onLiveBlock(msg);
                     }
                 }
@@ -273,7 +273,7 @@ export class HyperionMaster {
                 }
             },
             'lib_update': (msg: any) => {
-                if (msg.data) {
+                if (msg.data && this.conf.features.streaming.enable) {
                     // hLog(`Live Reader reported LIB update: ${msg.data.block_num} | ${msg.data.block_id}`);
                     this.wsRouterWorker.send(msg);
                 }
