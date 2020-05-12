@@ -81,20 +81,75 @@ function buildLinkBulk(payloads, messageMap) {
     });
 }
 
+function buildPermBulk(payloads, messageMap) {
+    return flatMap(payloads, (payload, body) => {
+        const id = `${body.owner}-${body.name}`;
+        messageMap.set(id, _.omit(payload, ['content']));
+        return makeScriptedOp(id, body);
+    });
+}
+
+function buildResLimitBulk(payloads, messageMap) {
+    return flatMap(payloads, (payload, body) => {
+        const id = `${body.owner}`;
+        messageMap.set(id, _.omit(payload, ['content']));
+        return makeScriptedOp(id, body);
+    });
+}
+
+function buildResUsageBulk(payloads, messageMap) {
+    return flatMap(payloads, (payload, body) => {
+        const id = `${body.owner}`;
+        messageMap.set(id, _.omit(payload, ['content']));
+        return makeScriptedOp(id, body);
+    });
+}
+
+interface IndexDist {
+    index: string;
+    first_block: number;
+    last_block: number;
+}
+
 export class ElasticRoutes {
     public routes: any;
     cm: ConnectionManager;
     chain: string;
     ingestNodeCounters = {};
+    distributionMap: IndexDist[];
 
-    constructor(connectionManager: ConnectionManager) {
-        this.routes = {
-            generic: this.handleGenericRoute.bind(this)
-        };
+    constructor(connectionManager: ConnectionManager, distributionMap: IndexDist[]) {
+        this.distributionMap = distributionMap;
+        this.routes = {generic: this.handleGenericRoute.bind(this)};
         this.cm = connectionManager;
         this.chain = this.cm.chain;
         this.registerRoutes();
         this.resetCounters();
+    }
+
+    createGenericBuilder(collection, channel, counter, index_name, method) {
+        return new Promise((resolve) => {
+            const messageMap = new Map();
+            this.bulkAction({
+                index: index_name,
+                type: '_doc',
+                body: method(collection, messageMap)
+            }).then((resp: any) => {
+                if (resp.errors) {
+                    this.ackOrNack(resp, messageMap, channel);
+                } else {
+                    channel.ackAll();
+                }
+                resolve(messageMap.size);
+            }).catch((err) => {
+                try {
+                    channel.nackAll();
+                    hLog('NackAll', err);
+                } finally {
+                    resolve(0);
+                }
+            });
+        })
     }
 
     async handleGenericRoute(payload: Message[], channel: Channel, cb: (indexed_size: number) => void): Promise<void> {
@@ -106,18 +161,28 @@ export class ElasticRoutes {
             }
             collection[type].push(message);
         }
-        if (collection['permission_link']) {
-            const messageMap = new Map();
-            this.bulkAction({
-                index: this.chain + '-link',
-                type: '_doc',
-                body: buildLinkBulk(collection['permission_link'], messageMap)
-            }).then(resp => {
-                this.onResponse(resp, messageMap, cb, collection['permission_link'], channel);
-            }).catch(err => {
-                this.onError(err, channel, cb);
-            });
+
+        const queue = [];
+        let counter = 0;
+
+        if (collection['permission']) {
+            queue.push(this.createGenericBuilder(collection['permission'], channel, counter, this.chain + '-perm', buildPermBulk));
         }
+
+        if (collection['permission_link']) {
+            queue.push(this.createGenericBuilder(collection['permission_link'], channel, counter, this.chain + '-link', buildLinkBulk));
+        }
+
+        if (collection['resource_limits']) {
+            queue.push(this.createGenericBuilder(collection['resource_limits'], channel, counter, this.chain + '-reslimits', buildResLimitBulk));
+        }
+
+        if (collection['resource_usage']) {
+            queue.push(this.createGenericBuilder(collection['resource_usage'], channel, counter, this.chain + '-userres', buildResUsageBulk));
+        }
+
+        await Promise.all(queue);
+        cb(counter);
     }
 
     resetCounters() {
@@ -202,18 +267,79 @@ export class ElasticRoutes {
         return this.cm.ingestClients[minIdx]['bulk'](bulkData);
     }
 
+    getIndexNameByBlock(block_num) {
+        const idx = this.distributionMap.find((value) => {
+            return value.first_block <= block_num && value.last_block >= block_num;
+        });
+        if (idx) {
+            return idx.index;
+        } else {
+            return null;
+        }
+    }
+
+    addToIndexMap(map, idx, payload) {
+        if (idx) {
+            if (!map[idx]) {
+                map[idx] = [];
+            }
+            map[idx].push(payload);
+        }
+    }
+
     private routeFactory(indexName: string, bulkGenerator) {
         return async (payloads, channel, cb) => {
-            const messageMap = new Map();
-            this.bulkAction({
-                index: this.chain + '-' + indexName,
-                type: '_doc',
-                body: bulkGenerator(payloads, messageMap)
-            }).then(resp => {
-                this.onResponse(resp, messageMap, cb, payloads, channel);
-            }).catch(err => {
-                this.onError(err, channel, cb);
-            });
+            let _index = this.chain + '-' + indexName;
+            if (this.cm.config.indexer.rewrite) {
+
+                // write to remapped indices
+                let payloadBlock = null;
+                const indexMap = {};
+                if (indexName === 'action' || indexName === 'delta') {
+                    for (const payload of payloads) {
+                        const blk = payload.properties.headers?.block_num;
+                        if (!payloadBlock) {
+                            payloadBlock = blk;
+                            const idx = this.getIndexNameByBlock(blk);
+                            this.addToIndexMap(indexMap, idx, payload);
+                        } else {
+                            if (payloadBlock !== blk) {
+                                const idx = this.getIndexNameByBlock(blk);
+                                this.addToIndexMap(indexMap, idx, payload);
+                            }
+                        }
+                    }
+                }
+
+                // if no index was mapped to that range use the default alias
+                if (Object.keys(indexMap).length === 0) {
+                    indexMap[_index] = payloads;
+                }
+
+                const queue = [];
+                let counter = 0;
+
+                for (const idxKey in indexMap) {
+                    queue.push(this.createGenericBuilder(indexMap[idxKey], channel, counter, idxKey, bulkGenerator));
+                }
+
+                const results = await Promise.all(queue);
+                results.forEach(value => counter += value);
+                cb(counter);
+            } else {
+
+                // write to alias
+                const messageMap = new Map();
+                this.bulkAction({
+                    index: _index,
+                    type: '_doc',
+                    body: bulkGenerator(payloads, messageMap)
+                }).then(resp => {
+                    this.onResponse(resp, messageMap, cb, payloads, channel);
+                }).catch(err => {
+                    this.onError(err, channel, cb);
+                });
+            }
         };
     }
 

@@ -10,6 +10,7 @@ function addIndexer(chainName, configDir) {
         interpreter_args: ["--max-old-space-size=4096", "--trace-deprecation"],
         autorestart: false,
         kill_timeout: 3600,
+        watch: false,
         time: true, // include timestamps in pm2 logs
         env: {
             CONFIG_DIR: configDir,
@@ -31,7 +32,7 @@ function addApiServer(chainName, configDir, threads) {
         instances: threads,
         autorestart: true,
         exp_backoff_restart_delay: 100,
-        watch: ["api"],
+        watch: false,
         env: {
             CONFIG_DIR: configDir,
             CONFIG_JSON: path.join(configDir, 'chains', chainName + '.config.json'),

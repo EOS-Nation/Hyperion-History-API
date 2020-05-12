@@ -2,7 +2,7 @@ import {HyperionWorker} from "./hyperionWorker";
 import {cargo, queue} from "async";
 import * as AbiEOS from "@eosrio/node-abieos";
 import {Serialize} from "../addons/eosjs-native";
-import {hLog} from "../helpers/common_functions";
+import {debugLog, hLog} from "../helpers/common_functions";
 import {Message} from "amqplib";
 import {parseDSPEvent} from "../modules/custom/dsp-parser";
 import {resolve, join} from "path";
@@ -63,7 +63,7 @@ export default class DSPoolWorker extends HyperionWorker {
         this.preIndexingQueue = queue((data: any, cb) => {
             if (this.ch_ready) {
                 try {
-                    this.ch.sendToQueue(data.queue, data.content);
+                    this.ch.sendToQueue(data.queue, data.content, {headers: data.headers});
                 } catch (e) {
                     hLog(e.message);
                 }
@@ -213,7 +213,7 @@ export default class DSPoolWorker extends HyperionWorker {
                     _status = true;
                     return [_status, resultType];
                 } catch (e) {
-                    hLog(`(abieos/cached) >> ${e.message}`);
+                    debugLog(`(abieos/cached) >> ${e.message}`);
                     _status = false;
                 }
             }
@@ -226,7 +226,7 @@ export default class DSPoolWorker extends HyperionWorker {
                     resultType = AbiEOS['get_type_for_' + field](contract, type);
                     _status = true;
                 } catch (e) {
-                    hLog(`(abieos/current) >> ${e.message}`);
+                    debugLog(`(abieos/current) >> ${e.message}`);
                     _status = false;
                 }
             }
@@ -241,7 +241,7 @@ export default class DSPoolWorker extends HyperionWorker {
             try {
                 return AbiEOS.bin_to_json(_action.account, actionType, Buffer.from(_action.data, 'hex'));
             } catch (e) {
-                hLog(`(abieos) ${_action.account}::${_action.name} @ ${block_num} >>> ${e.message}`);
+                debugLog(`(abieos) ${_action.account}::${_action.name} @ ${block_num} >>> ${e.message}`);
             }
         }
         return await self.deserializeActionAtBlock(_action, block_num);
@@ -357,7 +357,7 @@ export default class DSPoolWorker extends HyperionWorker {
                         this.txDec
                     );
                 } catch (e) {
-                    hLog(`(eosjs)  ${action.account}::${action.name} @ ${block_num} >>> ${e.message}`);
+                    debugLog(`(eosjs)  ${action.account}::${action.name} @ ${block_num} >>> ${e.message}`);
                     return null;
                 }
             } else {
@@ -388,7 +388,7 @@ export default class DSPoolWorker extends HyperionWorker {
 
     async processTraces(transaction_trace, extra) {
         const {cpu_usage_us, net_usage_words} = transaction_trace;
-        const {block_num, producer, ts} = extra;
+        const {block_num, producer, ts, inline_count, filtered} = extra;
         if (transaction_trace.status === 0) {
             let action_count = 0;
             const trx_id = transaction_trace['id'].toLowerCase();
@@ -401,18 +401,16 @@ export default class DSPoolWorker extends HyperionWorker {
                 producer,
                 cpu_usage_us,
                 net_usage_words,
-                ts
+                ts,
+                inline_count,
+                filtered
             };
 
-            const usageIncluded = {
-                status: false
-            };
+            const usageIncluded = {status: false};
 
             // perform action flattening if necessary
             if (this.mLoader.parser.flatten) {
-                const trace_counters = {
-                    trace_index: 0
-                };
+                const trace_counters = {trace_index: 0};
                 action_traces = await this.mLoader.parser.flattenInlineActions(action_traces, 0, trace_counters, 0);
                 action_traces.sort((a, b) => {
                     return a[1].receipt[1].global_sequence - b[1].receipt[1].global_sequence;
@@ -426,10 +424,6 @@ export default class DSPoolWorker extends HyperionWorker {
                         this.temp_ds_counter++;
                         action_count++;
                     }
-                }
-                // abort processing after reaching the maximum inline indexing limit
-                if (this.conf.indexer.max_inline && (_processedTraces.length >= this.conf.indexer.max_inline)) {
-                    break;
                 }
             }
 
@@ -498,18 +492,19 @@ export default class DSPoolWorker extends HyperionWorker {
             for (const uniqueAction of _finalTraces) {
                 const payload = Buffer.from(JSON.stringify(uniqueAction));
                 this.actionDsCounter++;
-                this.pushToActionsQueue(payload);
+                this.pushToActionsQueue(payload, block_num);
                 this.pushToActionStreamingQueue(payload, uniqueAction);
             }
         }
     }
 
-    pushToActionsQueue(payload) {
+    pushToActionsQueue(payload, block_num) {
         if (!this.conf.indexer.disable_indexing) {
             const q = this.chain + ":index_actions:" + (this.act_emit_idx);
             this.preIndexingQueue.push({
                 queue: q,
-                content: payload
+                content: payload,
+                headers: {block_num}
             });
             this.act_emit_idx++;
             if (this.act_emit_idx > (this.conf.scaling.indexing_queues * this.conf.scaling.ad_idx_queues)) {

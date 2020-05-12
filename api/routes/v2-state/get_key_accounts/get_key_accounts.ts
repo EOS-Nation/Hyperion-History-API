@@ -21,13 +21,59 @@ async function getKeyAccounts(fastify: FastifyInstance, request: FastifyRequest)
         try {
             publicKey = Numeric.convertLegacyPublicKey(public_Key);
         } catch (e) {
-            console.log(e);
+            console.log(e.message);
             invalidKey();
         }
     } else {
         invalidKey();
     }
 
+    const response = {
+        account_names: []
+    } as any;
+
+    if (request.req.method === 'GET' && request.query.details) {
+        response.permissions = [];
+    }
+
+    try {
+
+        const permTableResults = await fastify.elastic.search({
+            index: fastify.manager.chain + '-perm-*',
+            body: {
+                query: {
+                    bool: {
+                        must: [
+                            {
+                                term: {
+                                    "auth.keys.key.keyword": publicKey
+                                }
+                            }
+                        ],
+                    }
+                }
+            }
+        });
+
+        if (permTableResults.body.hits.hits.length > 0) {
+            for (const perm of permTableResults.body.hits.hits) {
+                response.account_names.push(perm._source.owner);
+                if (request.req.method === 'GET' && request.query.details) {
+                    response.permissions.push(perm._source);
+                }
+            }
+        }
+
+    } catch (e) {
+        console.log(e);
+    }
+
+    if (response.account_names.length > 0) {
+        response.account_names = [...(new Set(response.account_names))];
+        return response;
+    }
+
+    // Fallback to action search
     const _body = {
         query: {
             bool: {
@@ -47,9 +93,6 @@ async function getKeyAccounts(fastify: FastifyInstance, request: FastifyRequest)
         body: _body
     });
 
-    const response = {
-        account_names: []
-    };
     if (results['body']['hits']['hits'].length > 0) {
         response.account_names = results['body']['hits']['hits'].map((v) => {
             if (v._source.act.name === 'newaccount') {
@@ -67,6 +110,7 @@ async function getKeyAccounts(fastify: FastifyInstance, request: FastifyRequest)
             }
         });
     }
+
     if (response.account_names.length > 0) {
         response.account_names = [...(new Set(response.account_names))];
         return response;
