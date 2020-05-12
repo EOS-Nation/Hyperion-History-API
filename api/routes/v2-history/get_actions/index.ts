@@ -77,7 +77,15 @@ export default function (fastify: FastifyInstance, opts: any, next) {
             "simple": {
                 description: 'simplified output mode',
                 type: 'boolean'
-            }
+            },
+            "noBinary": {
+                description: "exclude large binary data",
+                type: 'boolean'
+            },
+            "checkLib": {
+                description: "perform reversibility check",
+                type: 'boolean'
+            },
         }),
         response: extendResponseSchema({
             "simple_actions": {

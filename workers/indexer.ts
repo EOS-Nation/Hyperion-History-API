@@ -12,19 +12,36 @@ export default class IndexerWorker extends HyperionWorker {
     private temp_indexed_count = 0;
 
     esRoutes: ElasticRoutes;
+    distributionMap;
 
     constructor() {
         super();
-        this.esRoutes = new ElasticRoutes(this.manager);
+
+        if (process.env.distribution) {
+            try {
+                this.distributionMap = JSON.parse(process.env.distribution);
+            } catch {
+                hLog('Failed to parse distribution map');
+            }
+        }
+
+        this.esRoutes = new ElasticRoutes(this.manager, this.distributionMap);
         this.indexQueue = cargo((payload: Message[], callback) => {
             if (this.ch_ready && payload) {
                 if (this.esRoutes.routes[process.env.type]) {
+
+                    // call route type
                     this.esRoutes.routes[process.env.type](payload, this.ch, (indexed_size) => {
                         if (indexed_size) {
                             this.temp_indexed_count += indexed_size;
                         }
-                        callback();
+                        try {
+                            callback();
+                        } catch (e) {
+                            hLog(`${e.message} on ${process.env.type}`);
+                        }
                     });
+
                 } else {
                     hLog(`No route for type: ${process.env.type}`);
                     process.exit(1);

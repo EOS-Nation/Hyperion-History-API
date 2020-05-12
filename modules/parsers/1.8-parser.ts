@@ -8,43 +8,16 @@ import {hLog} from "../../helpers/common_functions";
 
 export default class HyperionParser extends BaseParser {
 
+    flatten = false;
+
     public async parseAction(worker: DSPoolWorker, ts, action: ActionTrace, trx_data: TrxMetadata, _actDataArray, _processedTraces: ActionTrace[], full_trace, usageIncluded): Promise<boolean> {
-        let act = action.act;
-
-        if (this.checkBlacklist(act)) return false;
+        // check filters
+        if (this.checkBlacklist(action.act)) return false;
         if (this.filters.action_whitelist.size > 0) {
-            if (!this.checkWhitelist(act)) return false;
+            if (!this.checkWhitelist(action.act)) return false;
         }
 
-        const original_act = Object.assign({}, act);
-        let ds_act, error_message;
-        try {
-            ds_act = await worker.common.deserializeActionAtBlockNative(worker, act, trx_data.block_num);
-        } catch (e) {
-            console.log(e);
-            error_message = e.message;
-        }
-
-        if (ds_act) {
-            action.act.data = ds_act;
-            worker.common.attachActionExtras(worker, action);
-        } else {
-            action['act'] = original_act;
-            if (typeof action.act.data !== 'string') {
-                action.act.data = Buffer.from(action.act.data).toString('hex');
-            }
-            process.send({
-                event: 'ds_error',
-                data: {
-                    type: 'action_ds_error',
-                    block: trx_data.block_num,
-                    account: act.account,
-                    action: act.name,
-                    gs: parseInt(action.receipt[1].global_sequence, 10),
-                    message: error_message
-                }
-            });
-        }
+        await this.deserializeActionData(worker, action, trx_data);
 
         action["@timestamp"] = ts;
         action.block_num = trx_data.block_num;
@@ -60,35 +33,23 @@ export default class HyperionParser extends BaseParser {
                 console.log(full_trace.status);
                 console.log(action);
             }
+
             action.receipt = action.receipt[1];
             action.global_sequence = parseInt(action.receipt.global_sequence, 10);
+
             delete action.except;
             delete action.error_code;
 
             // add usage data to the first action on the transaction
             if (!usageIncluded.status) {
-                action.cpu_usage_us = trx_data.cpu_usage_us;
-                action.net_usage_words = trx_data.net_usage_words;
-
-                // add inline action count for the root action
-                if (full_trace.action_traces.length > 1) {
-                    action.inline_count = full_trace.action_traces.length - 1;
-                    if (worker.conf.indexer.max_inline < full_trace.action_traces.length) {
-                        action.max_inline = worker.conf.indexer.max_inline;
-                        action.inline_filtered = true;
-                    } else {
-                        action.inline_filtered = false;
-                    }
-                } else {
-                    action.inline_count = 0;
-                }
-                usageIncluded.status = true;
+                this.extendFirstAction(worker, action, trx_data, full_trace, usageIncluded);
             }
 
             _processedTraces.push(action);
         } else {
             hLog(action);
         }
+
         return true;
     }
 
@@ -149,6 +110,11 @@ export default class HyperionParser extends BaseParser {
                 process.exit(1);
             }
         }
+    }
+
+    async flattenInlineActions(action_traces: any[]): Promise<any[]> {
+        hLog(`Calling undefined flatten operation!`);
+        return Promise.resolve(undefined);
     }
 
 }

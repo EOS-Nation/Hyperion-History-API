@@ -6,6 +6,8 @@
     "server_name": "127.0.0.1:7000",
     "provider_name": "Example Provider",
     "provider_url": "https://example.com",
+    "chain_api": "",
+    "push_api": "",
     "chain_logo_url": "",
     "enable_caching": true,
     "cache_life": 1,
@@ -90,9 +92,7 @@
     "tables": {
       "proposals": true,
       "accounts": true,
-      "voters": true,
-      "userres": false,
-      "delband": false
+      "voters": true
     },
     "index_deltas": true,
     "index_transfer_memo": true,

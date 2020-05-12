@@ -5,6 +5,7 @@ import {ApiResponse, Client} from "@elastic/elasticsearch";
 import {HyperionModuleLoader} from "./loader";
 
 import {
+    debugLog,
     getLastIndexedABI,
     getLastIndexedBlock,
     getLastIndexedBlockByDelta,
@@ -35,6 +36,7 @@ import {HyperionWorkerDef} from "../interfaces/hyperionWorkerDef";
 import {HyperionConfig} from "../interfaces/hyperionConfig";
 import moment = require("moment");
 import Timeout = NodeJS.Timeout;
+import { join } from "path";
 
 export class HyperionMaster {
 
@@ -129,6 +131,7 @@ export class HyperionMaster {
     private activeSchedule: any;
     private pendingSchedule: any;
     private proposedSchedule: any;
+    private wsRouterWorker: cluster.Worker;
 
 
     constructor() {
@@ -268,6 +271,12 @@ export class HyperionMaster {
                         }
                     }
                 }
+            },
+            'lib_update': (msg: any) => {
+                if (msg.data) {
+                    // hLog(`Live Reader reported LIB update: ${msg.data.block_num} | ${msg.data.block_id}`);
+                    this.wsRouterWorker.send(msg);
+                }
             }
         };
     }
@@ -329,10 +338,6 @@ export class HyperionMaster {
         if (table_feats.delband) {
             indicesList.push({name: 'tableDelband', type: 'table-delband'});
             index_queues.push({type: 'table-delband', name: index_queue_prefix + "_table_delband"});
-        }
-        if (table_feats.userres) {
-            indicesList.push({name: 'tableUserres', type: 'table-userres'});
-            index_queues.push({type: 'table-userres', name: index_queue_prefix + "_table_userres"});
         }
     }
 
@@ -405,8 +410,7 @@ export class HyperionMaster {
                     await this.client.ilm.getLifecycle({
                         policy: ILP.policy
                     });
-                } catch (e) {
-                    hLog(e);
+                } catch {
                     try {
                         const ilm_status: ApiResponse = await this.client.ilm.putLifecycle(ILP);
                         if (!ilm_status.body['acknowledged']) {
@@ -437,7 +441,8 @@ export class HyperionMaster {
     }
 
     private async updateIndexTemplates(indicesList: { name: string, type: string }[], indexConfig) {
-        hLog(`Updating index templates for ${this.conf.settings.chain}`);
+        hLog(`Updating index templates for ${this.conf.settings.chain}...`);
+        let updateCounter = 0;
         for (const index of indicesList) {
             try {
                 if (indexConfig[index.name]) {
@@ -448,48 +453,65 @@ export class HyperionMaster {
                     if (!creation_status || !creation_status['body']['acknowledged']) {
                         hLog(`Failed to create template: ${this.conf.settings.chain}-${index}`);
                     } else {
-                        hLog(`${this.conf.settings.chain}-${index.type} template updated!`);
+                        updateCounter++;
+                        debugLog(`${this.conf.settings.chain}-${index.type} template updated!`);
                     }
                 } else {
                     hLog(`${index.name} template not found!`);
                 }
             } catch (e) {
-                hLog(e);
+                hLog(`[FATAL] ${e.message}`);
                 if (e.meta) {
                     hLog(e.meta.body);
                 }
                 process.exit(1);
             }
         }
-        hLog('Index templates updated');
+        hLog(`${updateCounter} index templates updated`);
     }
 
     private async createIndices(indicesList: { name: string, type: string }[]) {
         // Create indices
         const queue_prefix = this.conf.settings.chain;
         if (this.conf.settings.index_version) {
-            // Create indices
-            let version;
-            if (this.conf.settings.index_version === 'true') {
-                version = 'v1';
-            } else {
+
+            // Start with version=1 if none is defined
+            let version = 'v1';
+            if (this.conf.settings.index_version) {
                 version = this.conf.settings.index_version;
             }
+
             for (const index of indicesList) {
+
+                // check for existing first index in the sequence
                 const new_index = `${queue_prefix}-${index.type}-${version}-000001`;
-                const exists = await this.client.indices.exists({
-                    index: new_index
-                });
-                if (!exists.body) {
-                    hLog(`Creating index ${new_index}...`);
-                    await this.client['indices'].create({
-                        index: new_index
-                    });
-                    hLog(`Creating alias ${queue_prefix}-${index.type} >> ${new_index}`);
-                    await this.client.indices.putAlias({
-                        index: new_index,
-                        name: `${queue_prefix}-${index.type}`
-                    });
+                const exists = await this.client.indices.exists({index: new_index});
+
+                if (exists.body === false) {
+
+                    // create index
+                    try {
+                        hLog(`Creating index ${new_index}...`);
+                        await this.client.indices.create({
+                            index: new_index
+                        });
+                    } catch (e) {
+                        console.log(e);
+                        process.exit(1);
+                    }
+
+                    // create alias pointing to the new index
+                    try {
+                        hLog(`Creating alias ${queue_prefix}-${index.type} >> ${new_index}`);
+                        await this.client.indices.putAlias({
+                            index: new_index,
+                            name: `${queue_prefix}-${index.type}`
+                        });
+                    } catch (e) {
+                        console.log(e);
+                        process.exit(1);
+                    }
+
                 }
             }
         }
@@ -580,6 +602,14 @@ export class HyperionMaster {
                             str.push(`Indexing Queue: ${w[key]}`);
                             break;
                         }
+                        case 'distribution': {
+                            if (!!w[key]) {
+                                str.push(`Dist Map: ${Object.keys(w[key]).length} indices`);
+                            } else {
+                                str.push(`Dist Map: N/A`);
+                            }
+                            break;
+                        }
                         default: {
                             str.push(`${key}: ${w[key]}`);
                         }
@@ -603,7 +633,81 @@ export class HyperionMaster {
         }
     }
 
+    async getLastBlock(index_name) {
+        const lastBlockSearch = await this.manager.elasticsearchClient.search({
+            index: index_name,
+            size: 1,
+            _source: "block_num",
+            body: {
+                "query": {"match_all": {}},
+                sort: [{"block_num": {"order": "desc"}}]
+            }
+        });
+        if (lastBlockSearch.body.hits.hits[0]) {
+            return lastBlockSearch.body.hits.hits[0]._source.block_num;
+        } else {
+            return null;
+        }
+    }
+
+    async getFirstBlock(index_name) {
+        const firstBlockSearch = await this.manager.elasticsearchClient.search({
+            index: index_name,
+            size: 1,
+            _source: "block_num",
+            body: {
+                "query": {"match_all": {}},
+                sort: [{"block_num": {"order": "asc"}}]
+            }
+        });
+        if (firstBlockSearch.body.hits.hits[0]) {
+            return firstBlockSearch.body.hits.hits[0]._source.block_num;
+        } else {
+            return null;
+        }
+    }
+
     private async setupIndexers() {
+
+        const indexDist = {
+            action: [],
+            delta: []
+        };
+
+        const getIndicesResponse = await this.manager.elasticsearchClient.indices.get({
+            index: this.chain + "-*"
+        });
+
+        if (getIndicesResponse) {
+            const indices = getIndicesResponse.body;
+            const actionIndices = Object.keys(indices).filter(k => k.startsWith(this.chain + "-action"));
+            for (const actionIndex of actionIndices) {
+                const last_block = await this.getLastBlock(actionIndex);
+                const first_block = await this.getFirstBlock(actionIndex);
+                indexDist.action.push({
+                    index: actionIndex,
+                    first_block,
+                    last_block
+                });
+            }
+
+            const deltaIndices = Object.keys(indices).filter(k => k.startsWith(this.chain + "-delta"));
+            for (const deltaIndex of deltaIndices) {
+                const last_block = await this.getLastBlock(deltaIndex);
+                const first_block = await this.getFirstBlock(deltaIndex);
+                indexDist.delta.push({
+                    index: deltaIndex,
+                    first_block,
+                    last_block
+                });
+            }
+        }
+
+        if (this.conf.indexer.rewrite || this.conf.settings.preview) {
+            hLog(`Indexer rewrite enabled (${this.conf.indexer.start_on} - ${this.conf.indexer.stop_on})`);
+        }
+
+
         let qIdx = 0;
         this.IndexingQueues.forEach((q) => {
             let n = this.conf.scaling.indexing_queues;
@@ -620,7 +724,8 @@ export class HyperionMaster {
                     this.addWorker({
                         worker_role: 'ingestor',
                         queue: q.name + ":" + (qIdx + 1),
-                        type: q.type
+                        type: q.type,
+                        distribution: JSON.stringify(indexDist[q.type])
                     });
                     qIdx++;
                 }
@@ -808,44 +913,43 @@ export class HyperionMaster {
 
         this.activeReadersCount = 0;
 
-        if (!this.conf.indexer.repair_mode) {
-            if (!this.conf.indexer.live_only_mode) {
-                while (this.activeReadersCount < this.max_readers && this.lastAssignedBlock < this.head) {
-                    const start = this.lastAssignedBlock;
-                    let end = this.lastAssignedBlock + this.maxBatchSize;
-                    if (end > this.head) {
-                        end = this.head;
-                    }
-                    this.lastAssignedBlock += this.maxBatchSize;
-                    this.addWorker({
-                        worker_role: 'reader',
-                        first_block: start,
-                        last_block: end
-                    });
-                    this.activeReadersCount++;
-                    hLog(`Setting parallel reader [${this.worker_index}] from block ${start} to ${end}`);
+        // Setup parallel readers unless explicitly disabled
+        if (!this.conf.indexer.live_only_mode) {
+            while (this.activeReadersCount < this.max_readers && this.lastAssignedBlock < this.head) {
+                const start = this.lastAssignedBlock;
+                let end = this.lastAssignedBlock + this.maxBatchSize;
+                if (end > this.head) {
+                    end = this.head;
                 }
-            }
-
-            // Setup Serial reader worker
-            if (this.conf.indexer.live_reader) {
-                const _head = this.chain_data.head_block_num;
-                hLog(`Setting live reader at head = ${_head}`);
-
-                // live block reader
+                this.lastAssignedBlock += this.maxBatchSize;
                 this.addWorker({
-                    worker_role: 'continuous_reader',
-                    worker_last_processed_block: _head,
-                    ws_router: ''
+                    worker_role: 'reader',
+                    first_block: start,
+                    last_block: end
                 });
-
-                // live deserializer
-                this.addWorker({
-                    worker_role: 'deserializer',
-                    worker_queue: this.chain + ':live_blocks',
-                    live_mode: 'true'
-                });
+                this.activeReadersCount++;
+                hLog(`Setting parallel reader [${this.worker_index}] from block ${start} to ${end}`);
             }
+        }
+
+        // Setup live workers
+        if (this.conf.indexer.live_reader) {
+            const _head = this.chain_data.head_block_num;
+            hLog(`Setting live reader at head = ${_head}`);
+
+            // live block reader
+            this.addWorker({
+                worker_role: 'continuous_reader',
+                worker_last_processed_block: _head,
+                ws_router: ''
+            });
+
+            // live deserializer
+            this.addWorker({
+                worker_role: 'deserializer',
+                worker_queue: this.chain + ':live_blocks',
+                live_mode: 'true'
+            });
         }
     }
 
@@ -1043,7 +1147,7 @@ export class HyperionMaster {
                     // TODO: check last indexed block, print to console and save on a temporary file
                     getLastIndexedBlockFromRange(this.client, this.chain, this.starting_block, this.head).then((lastblock) => {
                         hLog(`Last Indexed Block: ${lastblock}`);
-                        writeFileSync(`./chains/.${this.chain}_lastblock.txt`, lastblock.toString());
+                        writeFileSync(join(process.cwd(), 'chains', `${this.chain}_lastblock.txt`), lastblock.toString());
                         hLog('Shutting down master...');
                         process.exit(1);
                     });
@@ -1107,6 +1211,9 @@ export class HyperionMaster {
         | Deltas: ${this.total_deltas}
         --------------------------------------------\n`);
                 this.range_completed = true;
+                if (!this.conf.indexer.live_reader) {
+                    process.exit();
+                }
             }
 
             // print monitoring log
@@ -1172,7 +1279,7 @@ export class HyperionMaster {
     }
 
     private launchWorkers() {
-        this.workerMap.forEach((conf) => {
+        this.workerMap.forEach((conf: HyperionWorkerDef) => {
             if (!conf.wref) {
                 conf['wref'] = cluster.fork(conf);
                 conf['wref'].on('message', (msg) => {
@@ -1180,6 +1287,9 @@ export class HyperionMaster {
                 });
                 if (conf.worker_role === 'ds_pool_worker') {
                     this.dsPoolMap.set(conf.local_id, conf['wref']);
+                }
+                if (conf.worker_role === 'router') {
+                    this.wsRouterWorker = conf['wref'];
                 }
             }
         });
@@ -1260,7 +1370,10 @@ export class HyperionMaster {
             {name: "abi", type: "abi"},
             {name: "delta", type: "delta"},
             {name: "logs", type: "logs"},
-            {name: 'permissionLink', type: 'link'}
+            {name: 'permissionLink', type: 'link'},
+            {name: 'permission', type: 'perm'},
+            {name: 'resourceLimits', type: 'reslimits'},
+            {name: 'resourceUsage', type: 'userres'},
         ];
 
         this.addStateTables(indicesList, this.IndexingQueues);
@@ -1320,6 +1433,10 @@ export class HyperionMaster {
         await this.setupStreaming();
         await this.setupDSPool();
 
+        if (this.conf.indexer.repair_mode) {
+            await this.startRepairMode();
+        }
+
         // Quit App if on preview mode
         if (preview) {
             HyperionMaster.printWorkerMap(this.workerMap);
@@ -1344,19 +1461,16 @@ export class HyperionMaster {
             this.conf.settings.ipc_debug_rate = 1000;
         }
 
-        if (this.conf.settings.ipc_debug_rate && this.conf.settings.ipc_debug_rate >= 1000) {
-            const rate = this.conf.settings.ipc_debug_rate;
-            this.totalMessages = 0;
-            setInterval(() => {
-                hLog(`IPC Messaging Rate: ${(this.totalMessages / (rate / 1000)).toFixed(2)} msg/s`);
+        if (this.conf.settings.debug) {
+            if (this.conf.settings.ipc_debug_rate && this.conf.settings.ipc_debug_rate >= 1000) {
+                const rate = this.conf.settings.ipc_debug_rate;
                 this.totalMessages = 0;
-            }, rate);
+                setInterval(() => {
+                    hLog(`IPC Messaging Rate: ${(this.totalMessages / (rate / 1000)).toFixed(2)} msg/s`);
+                    this.totalMessages = 0;
+                }, rate);
+            }
         }
-
-        // TODO: reimplement the indexer repair mode in typescript modules
-        // if (this.conf.indexer.repair_mode) {
-        //     this.startRepairMode();
-        // }
 
         this.startContractMonitoring();
         this.monitorIndexingQueues();
@@ -1399,6 +1513,112 @@ export class HyperionMaster {
                 reply(responses);
             });
         });
+    }
+
+    async streamBlockHeaders(start_on, stop_on, func: (data) => void) {
+        const responseQueue = [];
+        const init_response = await this.client.search({
+            index: this.chain + '-block-*',
+            scroll: '30s',
+            size: 1000,
+            track_total_hits: true,
+            body: {
+                query: {
+                    bool: {
+                        must: [
+                            {
+                                range: {
+                                    block_num: {
+                                        gte: start_on,
+                                        lte: stop_on
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                sort: [{block_num: {order: "asc"}}],
+                _source: {
+                    includes: [
+                        "block_num",
+                        "block_id",
+                        "prev_id"
+                    ]
+                }
+            },
+        });
+        const totalHits = init_response.body.hits.total.value;
+        hLog(`Total hits in range: ${totalHits}`);
+        responseQueue.push(init_response);
+        while (responseQueue.length) {
+            const {body} = responseQueue.shift();
+            for (const hit of body['hits']['hits']) {
+                func(hit._source);
+            }
+            const next_response = await this.client.scroll({scroll_id: body['_scroll_id'], scroll: '30s'});
+            if (next_response.body['hits']['hits'].length > 0) {
+                responseQueue.push(next_response);
+            }
+        }
+    }
+
+    async collectBlockHistogram() {
+        const min_interval = 25000;
+        const missed_ranges = [];
+        const response = await this.client.search({
+            index: this.chain + '-block-*',
+            track_total_hits: true,
+            body: {
+                aggs: {
+                    "blocks": {
+                        "histogram": {
+                            "field": "block_num",
+                            "interval": min_interval,
+                            "min_doc_count": 1
+                        }
+                    }
+                },
+                size: 0,
+                _source: {
+                    excludes: []
+                },
+                query: {
+                    match_all: {}
+                }
+            }
+        });
+        const totalBlockCount = response.body.hits.total.value;
+        hLog('Total indexed blocks: ' + totalBlockCount);
+        hLog('Last indexed block: ' + this.head);
+        hLog(`Total missing blocks: ${this.head - totalBlockCount}`);
+        let lastKey = 0;
+        for (const bucket of response.body.aggregations.blocks.buckets) {
+            if (lastKey !== 0 && bucket.key !== lastKey + min_interval) {
+                hLog(`All blocks missing from ${lastKey + min_interval} to ${bucket.key}`);
+                missed_ranges.push([lastKey + min_interval, bucket.key]);
+            }
+            if (bucket.doc_count < min_interval) {
+                const missed_on_range = min_interval - bucket.doc_count;
+                hLog(`${missed_on_range} blocks missing from ${bucket.key} to ${bucket.key + min_interval}`);
+                let lastBlock = bucket.key;
+                await this.streamBlockHeaders(bucket.key, bucket.key + min_interval, (data) => {
+                    if (data.block_num !== lastBlock + 1) {
+                        hLog(`Missing range from ${lastBlock} to ${data.block_num}`);
+                        missed_ranges.push([lastBlock, data.block_num]);
+                    }
+                    lastBlock = data.block_num;
+                });
+            }
+            lastKey = bucket.key;
+        }
+        hLog(missed_ranges);
+    }
+
+    async startRepairMode() {
+        hLog("-------->> REPAIR MODE ACTIVATED <<------------");
+        const t0 = Date.now();
+        await this.collectBlockHistogram();
+        hLog(`Block index analysis completed in ${(Date.now() - t0) / 1000} seconds`);
     }
 }
 

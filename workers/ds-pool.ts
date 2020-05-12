@@ -2,7 +2,7 @@ import {HyperionWorker} from "./hyperionWorker";
 import {cargo, queue} from "async";
 import * as AbiEOS from "@eosrio/node-abieos";
 import {Serialize} from "../addons/eosjs-native";
-import {hLog} from "../helpers/common_functions";
+import {debugLog, hLog} from "../helpers/common_functions";
 import {Message} from "amqplib";
 import {parseDSPEvent} from "../modules/custom/dsp-parser";
 import {resolve, join} from "path";
@@ -40,6 +40,7 @@ export default class DSPoolWorker extends HyperionWorker {
     actionDsCounter = 0;
 
     customAbiMap: Map<string, CustomAbiDef[]> = new Map();
+    private noActionCounter = 0;
 
     constructor() {
         super();
@@ -62,7 +63,7 @@ export default class DSPoolWorker extends HyperionWorker {
         this.preIndexingQueue = queue((data: any, cb) => {
             if (this.ch_ready) {
                 try {
-                    this.ch.sendToQueue(data.queue, data.content);
+                    this.ch.sendToQueue(data.queue, data.content, {headers: data.headers});
                 } catch (e) {
                     hLog(e.message);
                 }
@@ -132,7 +133,7 @@ export default class DSPoolWorker extends HyperionWorker {
 
     async fetchAbiHexAtBlockElastic(contract_name, last_block, get_json) {
         try {
-            const _includes = ["actions", "tables"];
+            const _includes = ["block", "actions", "tables"];
             if (get_json) {
                 _includes.push("abi");
             } else {
@@ -199,36 +200,33 @@ export default class DSPoolWorker extends HyperionWorker {
                 if (savedAbi) {
                     if (savedAbi[field + 's'].includes(type)) {
                         if (savedAbi.abi_hex) {
-                            _status = AbiEOS.load_abi_hex(contract, savedAbi.abi_hex);
+                            _status = this.loadAbiHex(contract, savedAbi.block, savedAbi.abi_hex);
                         }
                     }
                 }
             }
 
+            // successful load from ES cache
             if (_status) {
                 try {
                     resultType = AbiEOS['get_type_for_' + field](contract, type);
                     _status = true;
                     return [_status, resultType];
                 } catch (e) {
-                    hLog(`(abieos/cached) >> ${e.message}`);
+                    debugLog(`(abieos/cached) >> ${e.message}`);
                     _status = false;
                 }
             }
 
-            const currentAbi = await this.rpc.getRawAbi(contract);
-            if (currentAbi.abi.byteLength > 0) {
-                const abi_hex = Buffer.from(currentAbi.abi).toString('hex');
-                _status = AbiEOS.load_abi_hex(contract, abi_hex);
-            } else {
-                _status = false;
-            }
+
+            _status = await this.loadCurrentAbiHex(contract);
+
             if (_status === true) {
                 try {
                     resultType = AbiEOS['get_type_for_' + field](contract, type);
                     _status = true;
                 } catch (e) {
-                    // hLog(`(abieos/current) >> ${e.message}`);
+                    debugLog(`(abieos/current) >> ${e.message}`);
                     _status = false;
                 }
             }
@@ -243,10 +241,9 @@ export default class DSPoolWorker extends HyperionWorker {
             try {
                 return AbiEOS.bin_to_json(_action.account, actionType, Buffer.from(_action.data, 'hex'));
             } catch (e) {
-                hLog(`(abieos) ${_action.account}::${_action.name} @ ${block_num} >>> ${e.message}`);
+                debugLog(`(abieos) ${_action.account}::${_action.name} @ ${block_num} >>> ${e.message}`);
             }
         }
-        // fallback to eosjs deserializer
         return await self.deserializeActionAtBlock(_action, block_num);
     }
 
@@ -325,14 +322,15 @@ export default class DSPoolWorker extends HyperionWorker {
         }
         const result = {types, actions, tables: abi.tables};
         if (check_action) {
-            // hLog(actions);
             if (actions.has(check_action)) {
-                // hLog(check_action, 'check type', actions.get(check_action).name);
-                // hLog(abi);
-                try {
-                    AbiEOS.load_abi(accountName, JSON.stringify(abi));
-                } catch (e) {
-                    hLog(e);
+                if (!this.failedAbiMap.has(accountName) || !this.failedAbiMap.get(accountName).has(-1)) {
+                    try {
+                        AbiEOS.load_abi(accountName, JSON.stringify(abi));
+                    } catch (e) {
+                        hLog(e);
+                    }
+                } else {
+                    hLog('ignore reloading of current abi for', accountName);
                 }
                 this.contracts.set(accountName, {
                     contract: result,
@@ -359,8 +357,7 @@ export default class DSPoolWorker extends HyperionWorker {
                         this.txDec
                     );
                 } catch (e) {
-                    hLog(`(eosjs)  ${action.account}::${action.name} @ ${block_num} >>> ${e.message}`);
-                    // hLog(action.data, contract[0].actions.get(action.name).fields.map(f => `${f.name}: ${f.typeName}`));
+                    debugLog(`(eosjs)  ${action.account}::${action.name} @ ${block_num} >>> ${e.message}`);
                     return null;
                 }
             } else {
@@ -391,39 +388,42 @@ export default class DSPoolWorker extends HyperionWorker {
 
     async processTraces(transaction_trace, extra) {
         const {cpu_usage_us, net_usage_words} = transaction_trace;
-        const {block_num, producer, ts} = extra;
+        const {block_num, producer, ts, inline_count, filtered} = extra;
         if (transaction_trace.status === 0) {
             let action_count = 0;
             const trx_id = transaction_trace['id'].toLowerCase();
             const _actDataArray = [];
             const _processedTraces = [];
-            const action_traces = transaction_trace['action_traces'];
+            let action_traces = transaction_trace['action_traces'];
             const trx_data = {
                 trx_id,
                 block_num,
                 producer,
                 cpu_usage_us,
                 net_usage_words,
-                ts
+                ts,
+                inline_count,
+                filtered
             };
 
-            const usageIncluded = {
-                status: false
-            };
+            const usageIncluded = {status: false};
+
+            // perform action flattening if necessary
+            if (this.mLoader.parser.flatten) {
+                const trace_counters = {trace_index: 0};
+                action_traces = await this.mLoader.parser.flattenInlineActions(action_traces, 0, trace_counters, 0);
+                action_traces.sort((a, b) => {
+                    return a[1].receipt[1].global_sequence - b[1].receipt[1].global_sequence;
+                });
+            }
 
             for (const action_trace of action_traces) {
-
                 if (action_trace[0] === 'action_trace_v0') {
                     const ds_status = await this.mLoader.parser.parseAction(this, ts, action_trace[1], trx_data, _actDataArray, _processedTraces, transaction_trace, usageIncluded);
                     if (ds_status) {
                         this.temp_ds_counter++;
                         action_count++;
                     }
-                }
-
-                // abort processing after reaching the maximum inline indexing limit
-                if (this.conf.indexer.max_inline && (_processedTraces.length >= this.conf.indexer.max_inline)) {
-                    break;
                 }
             }
 
@@ -492,18 +492,19 @@ export default class DSPoolWorker extends HyperionWorker {
             for (const uniqueAction of _finalTraces) {
                 const payload = Buffer.from(JSON.stringify(uniqueAction));
                 this.actionDsCounter++;
-                this.pushToActionsQueue(payload);
+                this.pushToActionsQueue(payload, block_num);
                 this.pushToActionStreamingQueue(payload, uniqueAction);
             }
         }
     }
 
-    pushToActionsQueue(payload) {
+    pushToActionsQueue(payload, block_num) {
         if (!this.conf.indexer.disable_indexing) {
             const q = this.chain + ":index_actions:" + (this.act_emit_idx);
             this.preIndexingQueue.push({
                 queue: q,
-                content: payload
+                content: payload,
+                headers: {block_num}
             });
             this.act_emit_idx++;
             if (this.act_emit_idx > (this.conf.scaling.indexing_queues * this.conf.scaling.ad_idx_queues)) {
@@ -568,6 +569,14 @@ export default class DSPoolWorker extends HyperionWorker {
                         event: 'ds_report',
                         actions: this.actionDsCounter
                     });
+                    this.noActionCounter = 0;
+                } else {
+                    if (!this.conf.indexer.abi_scan_mode && !this.conf.indexer.live_reader) {
+                        this.noActionCounter++;
+                        if (this.noActionCounter > 60) {
+                            hLog(`No actions processed for ${this.noActionCounter} seconds!`);
+                        }
+                    }
                 }
                 this.contractUsage = {};
                 this.totalHits = 0;

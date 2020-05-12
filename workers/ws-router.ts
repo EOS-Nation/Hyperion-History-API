@@ -35,7 +35,12 @@ export default class WSRouter extends HyperionWorker {
 
 
     onIpcMessage(msg: any): void {
-        // hLog(msg.event);
+        switch (msg.event) {
+            case 'lib_update': {
+                this.io.emit('lib_update', msg.data);
+                break;
+            }
+        }
     }
 
     async run(): Promise<void> {
@@ -135,8 +140,10 @@ export default class WSRouter extends HyperionWorker {
 
     startRoutingRateMonitor() {
         setInterval(() => {
-            console.log('[Router] Routing rate: ' + (this.totalRoutedMessages / 20) + ' msg/s');
-            this.totalRoutedMessages = 0;
+            if (this.totalRoutedMessages > 0) {
+                console.log('[Router] Routing rate: ' + (this.totalRoutedMessages / 20) + ' msg/s');
+                this.totalRoutedMessages = 0;
+            }
         }, 20000);
     }
 
@@ -184,6 +191,9 @@ export default class WSRouter extends HyperionWorker {
     addActionRequest(data, id) {
         const req = data.request;
         console.log(req);
+        if (typeof req.account !== 'string') {
+            return {status: 'FAIL', reason: 'invalid request'};
+        }
         if (greylist.indexOf(req.contract) !== -1) {
             if (req.account === '' || req.account === req.contract) {
                 return {
@@ -341,7 +351,19 @@ export default class WSRouter extends HyperionWorker {
             });
         });
 
-        server.listen(this.manager.conn.chains[this.chain].WS_ROUTER_PORT, () => {
+        const connOpts = this.manager.conn.chains[this.chain];
+
+        let _port = 57200;
+        if (connOpts.WS_ROUTER_PORT) {
+            _port = connOpts.WS_ROUTER_PORT;
+        }
+
+        let _host = "127.0.0.1";
+        if (connOpts.WS_ROUTER_HOST) {
+            _host = connOpts.WS_ROUTER_HOST;
+        }
+
+        server.listen(_port, _host, () => {
             this.ready();
             setTimeout(() => {
                 if (!this.firstData) {

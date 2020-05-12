@@ -1,5 +1,5 @@
 export const terms = [
-    "notified.keyword",
+    "notified",
     "act.authorization.actor"
 ];
 
@@ -8,7 +8,10 @@ export const extendedActions = new Set([
     "newaccount",
     "updateauth",
     "buyram",
-    "buyrambytes"
+    "buyrambytes",
+    "delegatebw",
+    "undelegatebw",
+    "voteproducer"
 ]);
 
 export const primaryTerms = [
