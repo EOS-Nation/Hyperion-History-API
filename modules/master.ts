@@ -38,6 +38,8 @@ import moment = require("moment");
 import Timeout = NodeJS.Timeout;
 import { join } from "path";
 
+import {AsyncQueue, queue} from "async";
+
 export class HyperionMaster {
 
     // global configuration
@@ -132,6 +134,7 @@ export class HyperionMaster {
     private pendingSchedule: any;
     private proposedSchedule: any;
     private wsRouterWorker: cluster.Worker;
+    private liveBlockQueue: AsyncQueue<any>;
 
 
     constructor() {
@@ -141,6 +144,10 @@ export class HyperionMaster {
         this.mLoader = new HyperionModuleLoader(cm);
         this.chain = this.conf.settings.chain;
         this.initHandlerMap();
+        this.liveBlockQueue = queue((task, callback) => {
+            this.onLiveBlock(task);
+            callback();
+        }, 1);
     }
 
     initHandlerMap() {
@@ -155,7 +162,10 @@ export class HyperionMaster {
                     // LIVE READER
                     this.liveConsumedBlocks++;
                     if (this.conf.settings.bp_monitoring && !this.conf.indexer.abi_scan_mode) {
-                        this.onLiveBlock(msg);
+                        this.liveBlockQueue.push(msg);
+                        if (this.liveBlockQueue.length() > 1) {
+                            hLog("Live Block Queue:", this.liveBlockQueue.length(), 'blocks');
+                        }
                     }
                 }
             },
@@ -275,6 +285,13 @@ export class HyperionMaster {
             'lib_update': (msg: any) => {
                 if (msg.data && this.conf.features.streaming.enable) {
                     debugLog(`Live Reader reported LIB update: ${msg.data.block_num} | ${msg.data.block_id}`);
+                    this.wsRouterWorker.send(msg);
+                }
+            },
+            'fork_event': (msg: any) => {
+                if (msg.data && this.conf.features.streaming.enable) {
+                    hLog(`Live Reader reported a fork!`);
+                    hLog(msg.data);
                     this.wsRouterWorker.send(msg);
                 }
             }
@@ -797,7 +814,6 @@ export class HyperionMaster {
     }
 
     onLiveBlock(msg) {
-
         if (this.proposedSchedule && this.proposedSchedule.version) {
             if (msg.schedule_version >= this.proposedSchedule.version) {
                 hLog(`Active producers changed!`);
@@ -805,18 +821,16 @@ export class HyperionMaster {
                 this.activeSchedule = this.proposedSchedule;
                 this.printActiveProds();
                 this.proposedSchedule = null;
+                this.producedBlocks = {};
             }
         }
-
-        if (msg.block_num === this.lastProducedBlockNum + 1 || this.lastProducedBlockNum === 0) {
+        if ((msg.block_num === this.lastProducedBlockNum + 1) || this.lastProducedBlockNum === 0) {
             const prod = msg.producer;
-
             if (this.producedBlocks[prod]) {
                 this.producedBlocks[prod]++;
             } else {
                 this.producedBlocks[prod] = 1;
             }
-
             if (this.lastProducer !== prod) {
                 this.handoffCounter++;
                 if (this.lastProducer && this.handoffCounter > 2) {
@@ -861,7 +875,6 @@ export class HyperionMaster {
                 }
                 this.lastProducer = prod;
             }
-
             if (this.conf.settings.bp_logs) {
                 if (this.proposedSchedule) {
                     hLog(`received block ${msg.block_num} from ${prod} [${this.activeSchedule.version} >> ${this.proposedSchedule.version}]`);
@@ -869,12 +882,18 @@ export class HyperionMaster {
                     hLog(`received block ${msg.block_num} from ${prod} [${this.activeSchedule.version}]`);
                 }
             }
-
             this.lastProducedBlockNum = msg.block_num;
         } else {
-            this.blockMsgQueue.push(msg);
-            this.blockMsgQueue.sort((a, b) => a.block_num - b.block_num);
+            if (this.blockMsgQueue.length >= 12) {
+                this.blockMsgQueue = [msg];
+                this.lastProducedBlockNum = msg.block_num;
+            } else {
+                this.blockMsgQueue.push(msg);
+                this.blockMsgQueue.sort((a, b) => a.block_num - b.block_num);
+            }
             while (this.blockMsgQueue.length > 0) {
+                console.log('blockMsgQueue:', this.blockMsgQueue.length);
+                console.log(this.blockMsgQueue);
                 if (this.blockMsgQueue[0].block_num === this.lastProducedBlockNum + 1) {
                     this.onLiveBlock(this.blockMsgQueue.shift());
                 } else {
