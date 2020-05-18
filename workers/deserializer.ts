@@ -226,7 +226,9 @@ export default class MainDSWorker extends HyperionWorker {
             const block_num = res['this_block']['block_num'];
             let block_ts = res['this_time'];
             let light_block;
+
             if (this.conf.indexer.fetch_block) {
+
                 if (!block) {
                     return null;
                 }
@@ -235,8 +237,6 @@ export default class MainDSWorker extends HyperionWorker {
                 ts = block['timestamp'];
                 block_ts = ts;
 
-                // Collect total CPU and NET usage
-
                 let total_cpu = 0;
                 let total_net = 0;
 
@@ -244,12 +244,6 @@ export default class MainDSWorker extends HyperionWorker {
                     total_cpu += trx['cpu_usage_us'];
                     total_net += trx['net_usage_words'];
                 });
-
-                // console.log(`Block:${block_num} | Transactions: ${block.transactions.length} | Traces: ${traces.length}`);
-
-                // const cpu_pct = ((total_cpu / 200000) * 100).toFixed(2);
-                // const net_pct = ((total_net / 1048576) * 100).toFixed(2);
-                // hLog(`Block: ${res['this_block']['block_num']} | CPU: ${total_cpu} μs (${cpu_pct} %) | NET: ${total_net} bytes (${net_pct} %)`);
 
                 light_block = {
                     '@timestamp': block['timestamp'],
@@ -296,7 +290,13 @@ export default class MainDSWorker extends HyperionWorker {
                             trace[1].action_traces = trace[1].action_traces.slice(0, this.conf.indexer.max_inline);
                             filtered = true;
                         }
-                        this.routeToPool(trace[1], {block_num, producer, ts, inline_count, filtered});
+                        try {
+                            this.routeToPool(trace[1], {block_num, producer, ts, inline_count, filtered});
+                        } catch (e) {
+                            hLog(e);
+                            hLog(block_num);
+                            hLog(trace[1]);
+                        }
                     }
                 }
             }
@@ -328,12 +328,12 @@ export default class MainDSWorker extends HyperionWorker {
     routeToPool(trace, headers) {
 
         let first_action;
-        if (trace['action_traces'][0].length === 2) {
+        if (trace['action_traces'][0] && trace['action_traces'][0].length === 2) {
             first_action = trace['action_traces'][0][1];
 
             // replace first action if the root is eosio.null::nonce
             if (first_action.act.account === this.conf.settings.eosio_alias + '.null' && first_action.act.name === 'nonce') {
-                if (trace['action_traces'][1].length === 2) {
+                if (trace['action_traces'][1] && trace['action_traces'][1].length === 2) {
                     first_action = trace['action_traces'][1][1];
                 }
             }
@@ -1056,10 +1056,22 @@ export default class MainDSWorker extends HyperionWorker {
 
     async processDeltas(deltas, block_num, block_ts) {
         const deltaStruct = extractDeltaStruct(deltas);
+
+        // if(deltaStruct['account']) {
+        //     console.log(`------ block: ${block_num} ---------`);
+        // }
+
         for (const key in deltaStruct) {
             if (this.deltaStructHandlers[key] && deltaStruct.hasOwnProperty(key)) {
+
+                if (this.conf.indexer.abi_scan_mode && key !== 'account') {
+                    continue;
+                }
+
                 if (deltaStruct[key].length > 0) {
-                    const tRef = process.hrtime.bigint();
+
+                    // const tRef = process.hrtime.bigint();
+
                     for (const row of deltaStruct[key]) {
                         const data = this.deserializeNative(key, row.data);
                         try {
@@ -1068,10 +1080,12 @@ export default class MainDSWorker extends HyperionWorker {
                             hLog(`Delta struct deserialization error: ${e.message}`);
                         }
                     }
-                    const tPerRow = Number((process.hrtime.bigint() - tRef)) / 1000000 / deltaStruct[key].length;
-                    if (tPerRow > 25.0) {
-                        hLog(`[WARNING] ${key} processing took ${tPerRow.toFixed(2)} ms/row on block ${block_num} (total: ${deltaStruct[key].length} rows)`);
-                    }
+
+                    // console.log(`${key} => ${deltaStruct[key].length} (${Number((process.hrtime.bigint() - tRef)) / 1000000}ms)`);
+                    // const tPerRow = Number((process.hrtime.bigint() - tRef)) / 1000000 / deltaStruct[key].length;
+                    // if (tPerRow > 25.0) {
+                    //     hLog(`[WARNING] ${key} processing took ${tPerRow.toFixed(2)} ms/row on block ${block_num} (total: ${deltaStruct[key].length} rows)`);
+                    // }
                 }
             }
         }

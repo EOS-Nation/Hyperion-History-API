@@ -5,11 +5,12 @@ import {Serialize} from "../addons/eosjs-native";
 import {debugLog, hLog} from "../helpers/common_functions";
 import {Message} from "amqplib";
 import {parseDSPEvent} from "../modules/custom/dsp-parser";
-import {resolve, join} from "path";
-import {readdirSync, existsSync, readFileSync} from "fs";
+import {join, resolve} from "path";
+import {existsSync, readdirSync, readFileSync} from "fs";
 
 const abi_remapping = {
-    "_Bool": "bool"
+    "_Bool": "bool",
+    "account_name": "name",
 };
 
 interface CustomAbiDef {
@@ -46,10 +47,8 @@ export default class DSPoolWorker extends HyperionWorker {
         super();
 
         this.consumerQueue = cargo((payload: any[], cb) => {
-            this.processMessages(payload).then(() => {
-                cb();
-            }).catch((err) => {
-                hLog('NackAll:', err.message);
+            this.processMessages(payload).catch((err) => {
+                hLog('NackAll:', err);
                 if (this.ch_ready) {
                     try {
                         this.ch.nackAll();
@@ -57,6 +56,8 @@ export default class DSPoolWorker extends HyperionWorker {
                         hLog(e.message);
                     }
                 }
+            }).finally(() => {
+                cb();
             });
         }, this.conf.prefetch.block);
 
@@ -313,13 +314,19 @@ export default class DSPoolWorker extends HyperionWorker {
                 }
             } else {
                 hLog(accountName, block_num);
-                hLog(e);
+                hLog(e.message);
             }
         }
+
+        if (!types) {
+            return null;
+        }
+
         const actions = new Map();
         for (const {name, type} of abi.actions) {
             actions.set(name, Serialize.getType(types, type));
         }
+
         const result = {types, actions, tables: abi.tables};
         if (check_action) {
             if (actions.has(check_action)) {
@@ -330,7 +337,7 @@ export default class DSPoolWorker extends HyperionWorker {
                         hLog(e);
                     }
                 } else {
-                    hLog('ignore reloading of current abi for', accountName);
+                    debugLog('ignore reloading of current abi for', accountName);
                 }
                 this.contracts.set(accountName, {
                     contract: result,
@@ -548,9 +555,9 @@ export default class DSPoolWorker extends HyperionWorker {
         // delete cache contract on abieos context
         const status = AbiEOS.delete_contract(contract);
         if (!status) {
-            hLog('Contract not found on cache!');
+            debugLog('Contract not found on cache!');
         } else {
-            hLog(`🗑️ Contract Successfully removed from cache!`);
+            debugLog(`🗑️ Contract Successfully removed from cache!`);
         }
     }
 
@@ -574,7 +581,7 @@ export default class DSPoolWorker extends HyperionWorker {
                     if (!this.conf.indexer.abi_scan_mode && !this.conf.indexer.live_reader) {
                         this.noActionCounter++;
                         if (this.noActionCounter > 60) {
-                            hLog(`No actions processed for ${this.noActionCounter} seconds!`);
+                            debugLog(`No actions processed for ${this.noActionCounter} seconds!`);
                         }
                     }
                 }
@@ -620,7 +627,7 @@ export default class DSPoolWorker extends HyperionWorker {
                 break;
             }
             case 'remove_contract': {
-                hLog(`[${process.env.local_id}] Delete contract: ${msg.contract}`);
+                // hLog(`[${process.env.local_id}] Delete contract: ${msg.contract}`);
                 this.deleteCache(msg.contract);
                 break;
             }

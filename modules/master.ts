@@ -504,7 +504,7 @@ export class HyperionMaster {
                 const new_index = `${queue_prefix}-${index.type}-${version}-000001`;
                 const exists = await this.client.indices.exists({index: new_index});
 
-                if (exists.body === false) {
+                if (!exists.body) {
 
                     // create index
                     try {
@@ -882,25 +882,8 @@ export class HyperionMaster {
                     hLog(`received block ${msg.block_num} from ${prod} [${this.activeSchedule.version}]`);
                 }
             }
-            this.lastProducedBlockNum = msg.block_num;
-        } else {
-            if (this.blockMsgQueue.length >= 12) {
-                this.blockMsgQueue = [msg];
-                this.lastProducedBlockNum = msg.block_num;
-            } else {
-                this.blockMsgQueue.push(msg);
-                this.blockMsgQueue.sort((a, b) => a.block_num - b.block_num);
-            }
-            while (this.blockMsgQueue.length > 0) {
-                console.log('blockMsgQueue:', this.blockMsgQueue.length);
-                console.log(this.blockMsgQueue);
-                if (this.blockMsgQueue[0].block_num === this.lastProducedBlockNum + 1) {
-                    this.onLiveBlock(this.blockMsgQueue.shift());
-                } else {
-                    break;
-                }
-            }
         }
+        this.lastProducedBlockNum = msg.block_num;
     }
 
     handleMessage(msg) {
