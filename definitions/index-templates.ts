@@ -251,7 +251,14 @@ export const delta = {
 
 export const abi = {
     "index_patterns": [chain + "-abi-*"],
-    "settings": defaultIndexSettings,
+    "settings": {
+        "index": {
+            "number_of_shards": 1,
+            "refresh_interval": refresh,
+            "number_of_replicas": replicas,
+            "codec": compression
+        }
+    },
     "mappings": {
         "properties": {
             "@timestamp": {"type": "date"},
