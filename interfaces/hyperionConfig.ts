@@ -1,4 +1,5 @@
 export interface ScalingConfigs {
+    routing_mode: string;
     batch_size: number;
     queue_limit: number;
     readers: number;
@@ -75,6 +76,7 @@ interface ApiLimits {
 }
 
 interface ApiConfigs {
+    custom_core_token: string;
     chain_api_error_log?: boolean;
     chain_api?: string;
     push_api?: string;

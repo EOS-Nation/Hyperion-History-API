@@ -38,6 +38,8 @@ import moment = require("moment");
 import Timeout = NodeJS.Timeout;
 import { join } from "path";
 
+import {AsyncQueue, queue} from "async";
+
 export class HyperionMaster {
 
     // global configuration
@@ -132,6 +134,7 @@ export class HyperionMaster {
     private pendingSchedule: any;
     private proposedSchedule: any;
     private wsRouterWorker: cluster.Worker;
+    private liveBlockQueue: AsyncQueue<any>;
 
 
     constructor() {
@@ -141,6 +144,10 @@ export class HyperionMaster {
         this.mLoader = new HyperionModuleLoader(cm);
         this.chain = this.conf.settings.chain;
         this.initHandlerMap();
+        this.liveBlockQueue = queue((task, callback) => {
+            this.onLiveBlock(task);
+            callback();
+        }, 1);
     }
 
     initHandlerMap() {
@@ -154,8 +161,11 @@ export class HyperionMaster {
                 } else {
                     // LIVE READER
                     this.liveConsumedBlocks++;
-                    if (this.conf.settings.bp_monitoring) {
-                        this.onLiveBlock(msg);
+                    if (this.conf.settings.bp_monitoring && !this.conf.indexer.abi_scan_mode) {
+                        this.liveBlockQueue.push(msg);
+                        if (this.liveBlockQueue.length() > 1) {
+                            hLog("Live Block Queue:", this.liveBlockQueue.length(), 'blocks');
+                        }
                     }
                 }
             },
@@ -273,8 +283,15 @@ export class HyperionMaster {
                 }
             },
             'lib_update': (msg: any) => {
-                if (msg.data) {
-                    // hLog(`Live Reader reported LIB update: ${msg.data.block_num} | ${msg.data.block_id}`);
+                if (msg.data && this.conf.features.streaming.enable) {
+                    debugLog(`Live Reader reported LIB update: ${msg.data.block_num} | ${msg.data.block_id}`);
+                    this.wsRouterWorker.send(msg);
+                }
+            },
+            'fork_event': (msg: any) => {
+                if (msg.data && this.conf.features.streaming.enable) {
+                    hLog(`Live Reader reported a fork!`);
+                    hLog(msg.data);
                     this.wsRouterWorker.send(msg);
                 }
             }
@@ -487,7 +504,7 @@ export class HyperionMaster {
                 const new_index = `${queue_prefix}-${index.type}-${version}-000001`;
                 const exists = await this.client.indices.exists({index: new_index});
 
-                if (exists.body === false) {
+                if (!exists.body) {
 
                     // create index
                     try {
@@ -797,7 +814,6 @@ export class HyperionMaster {
     }
 
     onLiveBlock(msg) {
-
         if (this.proposedSchedule && this.proposedSchedule.version) {
             if (msg.schedule_version >= this.proposedSchedule.version) {
                 hLog(`Active producers changed!`);
@@ -805,18 +821,16 @@ export class HyperionMaster {
                 this.activeSchedule = this.proposedSchedule;
                 this.printActiveProds();
                 this.proposedSchedule = null;
+                this.producedBlocks = {};
             }
         }
-
-        if (msg.block_num === this.lastProducedBlockNum + 1 || this.lastProducedBlockNum === 0) {
+        if ((msg.block_num === this.lastProducedBlockNum + 1) || this.lastProducedBlockNum === 0) {
             const prod = msg.producer;
-
             if (this.producedBlocks[prod]) {
                 this.producedBlocks[prod]++;
             } else {
                 this.producedBlocks[prod] = 1;
             }
-
             if (this.lastProducer !== prod) {
                 this.handoffCounter++;
                 if (this.lastProducer && this.handoffCounter > 2) {
@@ -861,7 +875,6 @@ export class HyperionMaster {
                 }
                 this.lastProducer = prod;
             }
-
             if (this.conf.settings.bp_logs) {
                 if (this.proposedSchedule) {
                     hLog(`received block ${msg.block_num} from ${prod} [${this.activeSchedule.version} >> ${this.proposedSchedule.version}]`);
@@ -869,19 +882,8 @@ export class HyperionMaster {
                     hLog(`received block ${msg.block_num} from ${prod} [${this.activeSchedule.version}]`);
                 }
             }
-
-            this.lastProducedBlockNum = msg.block_num;
-        } else {
-            this.blockMsgQueue.push(msg);
-            this.blockMsgQueue.sort((a, b) => a.block_num - b.block_num);
-            while (this.blockMsgQueue.length > 0) {
-                if (this.blockMsgQueue[0].block_num === this.lastProducedBlockNum + 1) {
-                    this.onLiveBlock(this.blockMsgQueue.shift());
-                } else {
-                    break;
-                }
-            }
         }
+        this.lastProducedBlockNum = msg.block_num;
     }
 
     handleMessage(msg) {
@@ -1014,58 +1016,99 @@ export class HyperionMaster {
     updateWorkerAssignments() {
         const pool_size = this.conf.scaling.ds_pool_size;
         const worker_max_pct = 1 / pool_size;
+
         const worker_shares = {};
         for (let i = 0; i < pool_size; i++) {
             worker_shares[i] = 0.0;
         }
+
+        const worker_counters = {};
+        for (let i = 0; i < pool_size; i++) {
+            worker_counters[i] = 0;
+        }
+
+        const propWorkerMap = {};
+
+        // phase 1 - calculate usage
         for (const code in this.globalUsageMap) {
-            if (this.globalUsageMap.hasOwnProperty(code)) {
-                const _pct = this.globalUsageMap[code][0] / this.totalContractHits;
-                let used_pct = 0;
-                const proposedWorkers = [];
-                for (let i = 0; i < pool_size; i++) {
-                    if (worker_shares[i] < worker_max_pct) {
-                        const rem_pct = (_pct - used_pct);
-                        if (rem_pct === 0) {
-                            break;
-                        }
-                        if (rem_pct > worker_max_pct) {
+            const _pct = this.globalUsageMap[code][0] / this.totalContractHits;
+            let used_pct = 0;
+            const proposedWorkers = [];
+            for (let i = 0; i < pool_size; i++) {
+                if (worker_shares[i] < worker_max_pct) {
+                    const rem_pct = (_pct - used_pct);
+                    if (rem_pct === 0) {
+                        break;
+                    }
+                    if (rem_pct > worker_max_pct) {
+                        used_pct += (worker_max_pct - worker_shares[i]);
+                        worker_shares[i] = worker_max_pct;
+                    } else {
+                        if (worker_shares[i] + rem_pct > worker_max_pct) {
                             used_pct += (worker_max_pct - worker_shares[i]);
                             worker_shares[i] = worker_max_pct;
                         } else {
-                            if (worker_shares[i] + rem_pct > worker_max_pct) {
-                                used_pct += (worker_max_pct - worker_shares[i]);
-                                worker_shares[i] = worker_max_pct;
-                            } else {
-                                used_pct += rem_pct;
-                                worker_shares[i] += rem_pct;
-                            }
+                            used_pct += rem_pct;
+                            worker_shares[i] += rem_pct;
                         }
-                        proposedWorkers.push(i);
+                    }
+                    proposedWorkers.push(i);
+                    worker_counters[i]++;
+                }
+            }
+            propWorkerMap[code] = proposedWorkers;
+            this.globalUsageMap[code][1] = _pct;
+        }
+
+        // phase 2 - re-balance
+        const totalContracts = Object.keys(this.globalUsageMap).length;
+        const desiredCodeCount = totalContracts / pool_size;
+        const ignoreList = [];
+        for (let i = 0; i < pool_size; i++) {
+            if (worker_counters[i] > desiredCodeCount * 1.1) {
+                ignoreList.push(i);
+            }
+        }
+
+        for (const code in propWorkerMap) {
+            if (propWorkerMap[code].length === 1) {
+                const oldVal = propWorkerMap[code][0];
+                if (ignoreList.includes(oldVal)) {
+                    for (let i = 0; i < pool_size; i++) {
+                        if (worker_counters[i] < desiredCodeCount) {
+                            propWorkerMap[code] = [i];
+                            worker_counters[i]++;
+                            worker_counters[oldVal]--;
+                            break;
+                        }
                     }
                 }
-                this.globalUsageMap[code][1] = _pct;
-                if (JSON.stringify(this.globalUsageMap[code][2]) !== JSON.stringify(proposedWorkers)) {
-                    // hLog(this.globalUsageMap[code][2], ">>", proposedWorkers);
-                    proposedWorkers.forEach(w => {
-                        const idx = this.globalUsageMap[code][2].indexOf(w);
-                        if (idx !== -1) {
-                            this.globalUsageMap[code][2].splice(idx, 1);
-                        } else {
-                            // hLog(`Worker ${w} assigned to ${code}`);
-                        }
-                    });
-                    this.globalUsageMap[code][2].forEach(w_id => {
-                        // hLog(`>>>> Worker ${this.globalUsageMap[code][2]} removed from ${code}!`);
-                        if (this.dsPoolMap.has(w_id)) {
-                            this.dsPoolMap.get(w_id).send({
-                                event: "remove_contract",
-                                contract: code
-                            });
-                        }
-                    });
-                    this.globalUsageMap[code][2] = proposedWorkers;
-                }
+            }
+        }
+
+
+        // phase 3 - assign
+        for (const code in this.globalUsageMap) {
+            if (JSON.stringify(this.globalUsageMap[code][2]) !== JSON.stringify(propWorkerMap[code])) {
+                // hLog(this.globalUsageMap[code][2], ">>", proposedWorkers);
+                propWorkerMap[code].forEach(w => {
+                    const idx = this.globalUsageMap[code][2].indexOf(w);
+                    if (idx !== -1) {
+                        this.globalUsageMap[code][2].splice(idx, 1);
+                    } else {
+                        // hLog(`Worker ${w} assigned to ${code}`);
+                    }
+                });
+                this.globalUsageMap[code][2].forEach(w_id => {
+                    // hLog(`>>>> Worker ${this.globalUsageMap[code][2]} removed from ${code}!`);
+                    if (this.dsPoolMap.has(w_id)) {
+                        this.dsPoolMap.get(w_id).send({
+                            event: "remove_contract",
+                            contract: code
+                        });
+                    }
+                });
+                this.globalUsageMap[code][2] = propWorkerMap[code];
             }
         }
     }
@@ -1374,6 +1417,8 @@ export class HyperionMaster {
             {name: 'permission', type: 'perm'},
             {name: 'resourceLimits', type: 'reslimits'},
             {name: 'resourceUsage', type: 'userres'},
+            {name: 'generatedTransaction', type: 'gentrx'},
+            {name: 'failedTransaction', type: 'trxerr'}
         ];
 
         this.addStateTables(indicesList, this.IndexingQueues);

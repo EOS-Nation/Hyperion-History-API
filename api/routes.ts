@@ -31,6 +31,7 @@ export function registerRoutes(server: FastifyInstance) {
     addRoute(server, 'v2', '/v2');
     addRoute(server, 'v2-history', '/v2/history');
     addRoute(server, 'v2-state', '/v2/state');
+    addRoute(server, 'v2-stats', '/v2/stats');
 
     // legacy routes
     addRoute(server, 'v1-history', '/v1/history');
@@ -53,7 +54,7 @@ export function registerRoutes(server: FastifyInstance) {
     });
 
     server.addHook('onError', (request, reply, error, done) => {
-        console.log(`[${request.req.headers['x-real-ip']}] ${request.req.url} failed with error: ${error.message}`);
+        console.log(`[${request.req.headers['x-real-ip']}] ${request.req.method} ${request.req.url} failed with error: ${error.message}`);
         done();
     });
 
@@ -122,7 +123,8 @@ export function registerRoutes(server: FastifyInstance) {
                     provider: server.manager.config.api.provider_name,
                     provider_url: server.manager.config.api.provider_url,
                     chain_name: server.manager.config.api.chain_name,
-                    chain_id: server.manager.conn.chains[server.manager.chain].chain_id
+                    chain_id: server.manager.conn.chains[server.manager.chain].chain_id,
+                    custom_core_token: server.manager.config.api.custom_core_token
                 });
             });
     }
@@ -140,5 +142,6 @@ export function registerRoutes(server: FastifyInstance) {
     addRedirect(server, '/v2/history', '/v2/docs/index.html#/history');
     addRedirect(server, '/v2/state', '/v2/docs/index.html#/state');
     addRedirect(server, '/v1/chain', '/v2/docs/index.html#/chain');
-    addRedirect(server, '/', '/v2/explore');
+    addRedirect(server, '/explorer', '/v2/explore');
+    addRedirect(server, '/explore', '/v2/explore');
 }

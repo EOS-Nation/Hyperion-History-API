@@ -76,12 +76,20 @@ export class ConnectionManager {
     prepareESClient() {
         let es_url;
         const _es = this.conn.elasticsearch;
-        if (_es.user !== '') {
-            es_url = `http://${_es.user}:${_es.pass}@${_es.host}`;
-        } else {
-            es_url = `http://${_es.host}`
+        if (!_es.protocol) {
+            _es.protocol = 'http';
         }
-        this.esIngestClient = new Client({node: es_url});
+        if (_es.user !== '') {
+            es_url = `${_es.protocol}://${_es.user}:${_es.pass}@${_es.host}`;
+        } else {
+            es_url = `${_es.protocol}://${_es.host}`
+        }
+        this.esIngestClient = new Client({
+            node: es_url,
+            ssl: {
+                rejectUnauthorized: false
+            }
+        });
     }
 
     get elasticsearchClient() {
@@ -90,16 +98,25 @@ export class ConnectionManager {
 
     prepareIngestClients() {
         const _es = this.conn.elasticsearch;
+        if (!_es.protocol) {
+            _es.protocol = 'http';
+        }
         if (_es.ingest_nodes) {
             if (_es.ingest_nodes.length > 0) {
                 for (const node of _es.ingest_nodes) {
                     let es_url;
                     if (_es.user !== '') {
-                        es_url = `http://${_es.user}:${_es.pass}@${node}`;
+                        es_url = `${_es.protocol}://${_es.user}:${_es.pass}@${node}`;
                     } else {
-                        es_url = `http://${node}`
+                        es_url = `${_es.protocol}://${node}`
                     }
-                    this.esIngestClients.push(new Client({node: es_url, pingTimeout: 100}));
+                    this.esIngestClients.push(new Client({
+                        node: es_url,
+                        pingTimeout: 100,
+                        ssl: {
+                            rejectUnauthorized: false
+                        }
+                    }));
                 }
             }
         }

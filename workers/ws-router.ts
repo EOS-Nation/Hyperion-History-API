@@ -37,7 +37,17 @@ export default class WSRouter extends HyperionWorker {
     onIpcMessage(msg: any): void {
         switch (msg.event) {
             case 'lib_update': {
-                this.io.emit('lib_update', msg.data);
+                this.io.emit('lib_update', {
+                    chain_id: this.manager.conn.chains[this.chain]?.chain_id,
+                    ...msg.data
+                });
+                break;
+            }
+            case 'fork_event': {
+                this.io.emit('fork_event', {
+                    chain_id: this.manager.conn.chains[this.chain]?.chain_id,
+                    ...msg.data
+                });
                 break;
             }
         }

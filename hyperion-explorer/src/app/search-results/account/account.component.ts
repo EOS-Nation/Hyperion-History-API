@@ -15,9 +15,12 @@ import {faChevronDown} from '@fortawesome/free-solid-svg-icons/faChevronDown';
 import {faKey} from '@fortawesome/free-solid-svg-icons/faKey';
 import {faUser} from '@fortawesome/free-solid-svg-icons/faUser';
 import {faSadTear} from '@fortawesome/free-solid-svg-icons/faSadTear';
-import {MatPaginator} from "@angular/material/paginator";
-import {faVoteYea} from "@fortawesome/free-solid-svg-icons/faVoteYea";
-import {faQuestionCircle} from "@fortawesome/free-regular-svg-icons/faQuestionCircle";
+import {MatPaginator, PageEvent} from '@angular/material/paginator';
+import {faVoteYea} from '@fortawesome/free-solid-svg-icons/faVoteYea';
+import {faQuestionCircle} from '@fortawesome/free-regular-svg-icons/faQuestionCircle';
+import {AccountCreationData} from '../../interfaces';
+import {ChainService} from '../../services/chain.service';
+import {Title} from '@angular/platform-browser';
 
 interface Permission {
   perm_name: string;
@@ -67,9 +70,10 @@ interface FlatNode {
 })
 export class AccountComponent implements OnInit, OnDestroy {
 
-  columnsToDisplay: string[] = ['trx_id', 'action', 'data', 'block_num'];
   @ViewChild(MatSort, {static: false}) sort: MatSort;
-  @ViewChild(MatPaginator, {static: true}) paginator: MatPaginator;
+  @ViewChild(MatPaginator, {static: false}) paginator: MatPaginator;
+
+  // FontAwesome Icons
   faClock = faClock;
   faUserCircle = faUserCircle;
   faCircle = faCircle;
@@ -83,7 +87,10 @@ export class AccountComponent implements OnInit, OnDestroy {
   faUser = faUser;
   faVote = faVoteYea;
   faQuestionCircle = faQuestionCircle;
+
   accountName: string;
+
+  columnsToDisplay: string[] = ['trx_id', 'action', 'data', 'block_num'];
 
   treeControl: FlatTreeControl<FlatNode>;
 
@@ -93,10 +100,18 @@ export class AccountComponent implements OnInit, OnDestroy {
   detailedView = true;
 
   systemPrecision = 4;
+  systemSymbol = '';
+  creationData: AccountCreationData = {
+    creator: undefined,
+    timestamp: undefined
+  };
+  systemTokenContract = 'eosio.token';
 
   constructor(
     private activatedRoute: ActivatedRoute,
-    public accountService: AccountService
+    public accountService: AccountService,
+    public chainData: ChainService,
+    private title: Title
   ) {
 
     this.treeControl = new FlatTreeControl<FlatNode>(
@@ -144,12 +159,45 @@ export class AccountComponent implements OnInit, OnDestroy {
 
       this.accountName = routeParams.account_name;
       if (await this.accountService.loadAccountData(routeParams.account_name)) {
-        this.systemPrecision = this.getPrecision(this.accountService.account['core_liquid_balance']);
+
+        if (!this.chainData.chainInfoData.chain_name) {
+          this.title.setTitle(`${this.accountName} • Hyperion Explorer`);
+        } else {
+          this.title.setTitle(`${this.accountName} • ${this.chainData.chainInfoData.chain_name} Hyperion Explorer`);
+        }
+
+        const customCoreToken = this.chainData.chainInfoData.custom_core_token;
+        if (customCoreToken && customCoreToken !== '') {
+          const parts = this.chainData.chainInfoData.custom_core_token.split('::');
+          this.systemSymbol = parts[1];
+          this.systemTokenContract = parts[0];
+          const coreBalance = this.accountService.jsonData.tokens.find((v) => {
+            return v.symbol === this.systemSymbol && v.contract === this.systemTokenContract;
+          });
+          if (coreBalance) {
+            this.accountService.account.core_liquid_balance = coreBalance.amount + ' ' + this.systemSymbol;
+          }
+        } else {
+          this.systemSymbol = this.getSymbol(this.accountService.account.core_liquid_balance);
+        }
+
+        this.systemPrecision = this.getPrecision(this.accountService.account.core_liquid_balance);
+        if (this.systemSymbol === null) {
+          try {
+            this.systemSymbol = this.getSymbol(this.accountService.account.total_resources.cpu_weight);
+            if (this.systemSymbol === null) {
+              this.systemSymbol = 'SYS';
+            }
+          } catch (e) {
+            this.systemSymbol = 'SYS';
+          }
+        }
         this.processPermissions();
         setTimeout(() => {
           this.accountService.tableDataSource.sort = this.sort;
           this.accountService.tableDataSource.paginator = this.paginator;
         }, 500);
+        this.creationData = await this.accountService.getCreator(routeParams.account_name);
       }
     });
   }
@@ -166,37 +214,49 @@ export class AccountComponent implements OnInit, OnDestroy {
     }
   }
 
+  getSymbol(asset: string): string {
+    if (asset) {
+      try {
+        return asset.split(' ')[1];
+      } catch (e) {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
+
   liquidBalance() {
-    if (this.accountService.account['core_liquid_balance']) {
-      return parseFloat(this.accountService.account['core_liquid_balance'].split(' ')[0]);
+    if (this.accountService.account.core_liquid_balance) {
+      return parseFloat(this.accountService.account.core_liquid_balance.split(' ')[0]);
     }
     return 0;
   }
 
   myCpuBalance() {
-    if (this.accountService.account['self_delegated_bandwidth']) {
-      return parseFloat(this.accountService.account['self_delegated_bandwidth'].cpu_weight.split(' ')[0]);
+    if (this.accountService.account.self_delegated_bandwidth) {
+      return parseFloat(this.accountService.account.self_delegated_bandwidth.cpu_weight.split(' ')[0]);
     }
     return 0;
   }
 
   myNetBalance() {
-    if (this.accountService.account['self_delegated_bandwidth']) {
-      return parseFloat(this.accountService.account['self_delegated_bandwidth'].net_weight.split(' ')[0]);
+    if (this.accountService.account.self_delegated_bandwidth) {
+      return parseFloat(this.accountService.account.self_delegated_bandwidth.net_weight.split(' ')[0]);
     }
     return 0;
   }
 
   cpuBalance() {
-    if (this.accountService.account['total_resources']) {
-      return parseFloat(this.accountService.account['total_resources'].cpu_weight.split(' ')[0]);
+    if (this.accountService.account.total_resources) {
+      return parseFloat(this.accountService.account.total_resources.cpu_weight.split(' ')[0]);
     }
     return 0;
   }
 
   netBalance() {
-    if (this.accountService.account['total_resources']) {
-      return parseFloat(this.accountService.account['total_resources'].net_weight.split(' ')[0]);
+    if (this.accountService.account.total_resources) {
+      return parseFloat(this.accountService.account.total_resources.net_weight.split(' ')[0]);
     }
     return 0;
   }
@@ -237,9 +297,9 @@ export class AccountComponent implements OnInit, OnDestroy {
   refundBalance() {
     let cpuRefund = 0;
     let netRefund = 0;
-    if (this.accountService.account['refund_request']) {
-      cpuRefund = parseFloat(this.accountService.account['refund_request'].cpu_amount.split(' ')[0]);
-      netRefund = parseFloat(this.accountService.account['refund_request'].net_amount.split(' ')[0]);
+    if (this.accountService.account.refund_request) {
+      cpuRefund = parseFloat(this.accountService.account.refund_request.cpu_amount.split(' ')[0]);
+      netRefund = parseFloat(this.accountService.account.refund_request.net_amount.split(' ')[0]);
     }
     return cpuRefund + netRefund;
   }
@@ -292,7 +352,7 @@ export class AccountComponent implements OnInit, OnDestroy {
     if (bytes > 1024) {
       return (bytes / (1024)).toFixed(2) + ' KB';
     }
-    return bytes + ' bytes'
+    return bytes + ' bytes';
   }
 
   convertMicroS(micros: number) {
@@ -302,8 +362,7 @@ export class AccountComponent implements OnInit, OnDestroy {
     const calcMin = calcSec * 60;
     const calcHour = calcMin * 60;
     if (micros > calcHour) {
-      const min =
-        int = Math.floor(micros / calcHour);
+      int = Math.floor(micros / calcHour);
       remainder = micros % calcHour;
       return int + 'h ' + Math.round(remainder / calcMin) + 'min';
     }
@@ -318,6 +377,25 @@ export class AccountComponent implements OnInit, OnDestroy {
     if (micros > 1000) {
       return (micros / (1000)).toFixed(2) + 'ms';
     }
-    return micros + 'µs'
+    return micros + 'µs';
+  }
+
+  changePage(event: PageEvent) {
+
+    // disable streaming if enabled
+    if (this.accountService.streamClientStatus) {
+      this.accountService.toggleStreaming();
+    }
+
+    const maxPages = Math.floor(event.length / event.pageSize);
+    console.log(event);
+    console.log(`${event.pageIndex} / ${maxPages}`);
+    try {
+      if (event.pageIndex === maxPages - 1) {
+        this.accountService.loadMoreActions(this.accountName).catch(console.log);
+      }
+    } catch (e) {
+      console.log(e);
+    }
   }
 }

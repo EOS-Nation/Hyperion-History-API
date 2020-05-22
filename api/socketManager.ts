@@ -1,7 +1,6 @@
 import {checkFilter, hLog} from '../helpers/common_functions';
 import * as sockets from 'socket.io';
 import * as IOClient from 'socket.io-client';
-import * as socketIOredis from 'socket.io-redis';
 import {FastifyInstance} from "fastify";
 
 export interface StreamDeltasRequest {
@@ -255,8 +254,6 @@ export class SocketManager {
             transports: ['websocket', 'polling'],
         });
 
-        this.io.adapter(socketIOredis(redisOpts));
-
         this.io.on('connection', (socket) => {
 
             if (socket.handshake.headers['x-forwarded-for']) {
@@ -312,9 +309,7 @@ export class SocketManager {
     startRelay() {
         console.log(`starting relay - ${this.url}`);
 
-        this.relay = IOClient(this.url, {
-            path: '/router',
-        });
+        this.relay = IOClient(this.url, {path: '/router'});
 
         this.relay.on('connect', () => {
             console.log('Relay Connected!');
@@ -342,12 +337,18 @@ export class SocketManager {
 
         // Relay LIB info to clients;
         this.relay.on('lib_update', (data) => {
-            this.io.emit('lib_update', data);
+            if (this.server.manager.conn.chains[this.server.manager.chain].chain_id === data.chain_id) {
+                this.io.emit('lib_update', data);
+            }
         });
 
-        setTimeout(() => {
-            console.log(`Relay status: ${this.relay.connected}`);
-        }, 2000);
+        // Relay LIB info to clients;
+        this.relay.on('fork_event', (data) => {
+            console.log(data);
+            if (this.server.manager.conn.chains[this.server.manager.chain].chain_id === data.chain_id) {
+                this.io.emit('fork_event', data);
+            }
+        });
     }
 
     emitToClient(traceData, type) {

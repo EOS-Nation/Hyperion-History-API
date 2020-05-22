@@ -1,10 +1,11 @@
 import {Injectable} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {environment} from '../../environments/environment';
-import {GetAccountResponse} from '../interfaces';
+import {AccountCreationData, GetAccountResponse} from '../interfaces';
 import {MatTableDataSource} from '@angular/material/table';
 import {HyperionSocketClient} from '@eosrio/hyperion-stream-client/lib/client/hyperion-socket-client';
 import {IncomingData} from '@eosrio/hyperion-stream-client/lib';
+import {ancestorWhere} from 'tslint';
 
 interface HealthResponse {
   features: {
@@ -21,6 +22,8 @@ interface HealthResponse {
 })
 export class AccountService {
   getAccountUrl: string;
+  getActionsUrl: string;
+  getCreatorUrl: string;
   getTxUrl: string;
   getBlockUrl: string;
   getKeyUrl: string;
@@ -50,6 +53,8 @@ export class AccountService {
   constructor(private httpClient: HttpClient) {
     this.getServerUrl();
     this.getAccountUrl = environment.hyperionApiUrl + '/v2/state/get_account?account=';
+    this.getActionsUrl = environment.hyperionApiUrl + '/v2/history/get_actions?account=';
+    this.getCreatorUrl = environment.hyperionApiUrl + '/v2/history/get_creator?account=';
     this.getTxUrl = environment.hyperionApiUrl + '/v2/history/get_transaction?id=';
     this.getBlockUrl = environment.hyperionApiUrl + '/v1/trace_api/get_block';
     this.getKeyUrl = environment.hyperionApiUrl + '/v2/state/get_key_accounts?public_key=';
@@ -105,7 +110,7 @@ export class AccountService {
   }
 
   getServerUrl() {
-    let server = '';
+    let server;
     if (environment.production) {
       server = window.location.origin;
     } else {
@@ -209,7 +214,23 @@ export class AccountService {
     } catch (error) {
       console.log(error);
       this.jsonData = null;
+      this.loaded = true;
       return false;
+    }
+  }
+
+  async loadMoreActions(accountName: string) {
+    const firstAction = this.actions[this.actions.length - 1];
+    const maxGs = (firstAction.global_sequence - 1);
+    try {
+      const q = this.getActionsUrl + accountName + '&global_sequence=0-' + maxGs + '&limit=50';
+      const results = await this.httpClient.get(q).toPromise() as any;
+      if (results.actions && results.actions.length > 0) {
+        this.actions.push(...results.actions);
+        this.tableDataSource.data = this.actions;
+      }
+    } catch (e) {
+      console.log(e);
     }
   }
 
@@ -221,6 +242,7 @@ export class AccountService {
       return data;
     } catch (error) {
       console.log(error);
+      this.loaded = true;
       return null;
     }
   }
@@ -235,6 +257,7 @@ export class AccountService {
       return data;
     } catch (error) {
       console.log(error);
+      this.loaded = true;
       return null;
     }
   }
@@ -247,6 +270,16 @@ export class AccountService {
       return data;
     } catch (error) {
       console.log(error);
+      this.loaded = true;
+      return null;
+    }
+  }
+
+  async getCreator(accountName: string): Promise<AccountCreationData> {
+    try {
+      return await this.httpClient.get(this.getCreatorUrl + accountName).toPromise() as AccountCreationData;
+    } catch (error) {
+      console.log(error);
       return null;
     }
   }
@@ -257,6 +290,7 @@ export class AccountService {
       this.streamClientStatus = false;
       this.checkIrreversibility().catch(console.log);
     } else {
+      this.tableDataSource.paginator.firstPage();
       this.clearLoops();
       this.setupRequests();
       this.streamClient.connect(() => {

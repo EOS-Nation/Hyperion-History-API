@@ -6,6 +6,7 @@ import * as AbiEOS from "@eosrio/node-abieos";
 import {Serialize} from "../addons/eosjs-native";
 import {Type} from "../addons/eosjs-native/eosjs-serialize";
 import {debugLog, hLog} from "../helpers/common_functions";
+import {createHash} from "crypto";
 
 const index_queues = require('../definitions/index-queues').index_queues;
 const {AbiDefinitions} = require("../definitions/abi_def");
@@ -56,6 +57,8 @@ export default class MainDSWorker extends HyperionWorker {
     private monitoringLoop: NodeJS.Timeout;
 
     autoBlacklist: Map<string, any[]> = new Map();
+
+    lastSelectedWorker = 0;
 
     constructor() {
 
@@ -226,7 +229,9 @@ export default class MainDSWorker extends HyperionWorker {
             const block_num = res['this_block']['block_num'];
             let block_ts = res['this_time'];
             let light_block;
+
             if (this.conf.indexer.fetch_block) {
+
                 if (!block) {
                     return null;
                 }
@@ -235,21 +240,35 @@ export default class MainDSWorker extends HyperionWorker {
                 ts = block['timestamp'];
                 block_ts = ts;
 
-                // Collect total CPU and NET usage
-
                 let total_cpu = 0;
                 let total_net = 0;
+
+                const failedTrx = [];
 
                 block.transactions.forEach((trx) => {
                     total_cpu += trx['cpu_usage_us'];
                     total_net += trx['net_usage_words'];
+                    if (trx.status !== 0) {
+                        failedTrx.push({
+                            id: trx.trx[1],
+                            status: trx.status
+                        });
+                    }
                 });
 
-                // console.log(`Block:${block_num} | Transactions: ${block.transactions.length} | Traces: ${traces.length}`);
-
-                // const cpu_pct = ((total_cpu / 200000) * 100).toFixed(2);
-                // const net_pct = ((total_net / 1048576) * 100).toFixed(2);
-                // hLog(`Block: ${res['this_block']['block_num']} | CPU: ${total_cpu} μs (${cpu_pct} %) | NET: ${total_net} bytes (${net_pct} %)`);
+                // submit failed trx
+                if (failedTrx.length > 0) {
+                    for (const tx of failedTrx) {
+                        if (typeof tx.id === 'string') {
+                            this.pushToIndexQueue({
+                                "@timestamp": ts,
+                                "block_num": block_num,
+                                trx_id: tx.id,
+                                status: tx.status
+                            }, 'trx_error');
+                        }
+                    }
+                }
 
                 light_block = {
                     '@timestamp': block['timestamp'],
@@ -278,7 +297,6 @@ export default class MainDSWorker extends HyperionWorker {
 
             // Process Delta Traces (must be done first to catch ABI updates)
             if (deltas && this.conf.indexer.process_deltas) {
-                const t1 = process.hrtime.bigint();
                 await this.processDeltas(deltas, block_num, block_ts);
             }
 
@@ -297,7 +315,13 @@ export default class MainDSWorker extends HyperionWorker {
                             trace[1].action_traces = trace[1].action_traces.slice(0, this.conf.indexer.max_inline);
                             filtered = true;
                         }
-                        this.routeToPool(trace[1], {block_num, producer, ts, inline_count, filtered});
+                        try {
+                            this.routeToPool(trace[1], {block_num, producer, ts, inline_count, filtered});
+                        } catch (e) {
+                            hLog(e);
+                            hLog(block_num);
+                            hLog(trace[1]);
+                        }
                     }
                 }
             }
@@ -329,12 +353,12 @@ export default class MainDSWorker extends HyperionWorker {
     routeToPool(trace, headers) {
 
         let first_action;
-        if (trace['action_traces'][0].length === 2) {
+        if (trace['action_traces'][0] && trace['action_traces'][0].length === 2) {
             first_action = trace['action_traces'][0][1];
 
             // replace first action if the root is eosio.null::nonce
             if (first_action.act.account === this.conf.settings.eosio_alias + '.null' && first_action.act.name === 'nonce') {
-                if (trace['action_traces'][1].length === 2) {
+                if (trace['action_traces'][1] && trace['action_traces'][1].length === 2) {
                     first_action = trace['action_traces'][1][1];
                 }
             }
@@ -358,32 +382,46 @@ export default class MainDSWorker extends HyperionWorker {
 
         let selected_q = 0;
         const _code = first_action.act.account;
-        if (this.dsPoolMap[_code]) {
-            const workers = this.dsPoolMap[_code][2];
-            for (const w of workers) {
-                if (typeof this.ds_pool_counters[_code] === 'undefined') {
-                    selected_q = w;
-                    this.ds_pool_counters[_code] = w;
-                    break;
-                } else {
-                    if (this.ds_pool_counters[_code] === workers[workers.length - 1]) {
-                        this.ds_pool_counters[_code] = workers[0];
+
+
+        // round robin option
+        if (this.conf.scaling.routing_mode === 'round_robin') {
+            if (this.lastSelectedWorker < this.conf.scaling.ds_pool_size) {
+                this.lastSelectedWorker++;
+            } else {
+                this.lastSelectedWorker = 0;
+            }
+            selected_q = this.lastSelectedWorker;
+        } else {
+            // heatmap option
+            if (this.dsPoolMap[_code]) {
+                const workers = this.dsPoolMap[_code][2];
+                for (const w of workers) {
+                    if (typeof this.ds_pool_counters[_code] === 'undefined') {
                         selected_q = w;
                         this.ds_pool_counters[_code] = w;
                         break;
                     } else {
-                        if (this.ds_pool_counters[_code] === w) {
-                            continue;
-                        }
-                        if (w > this.ds_pool_counters[_code]) {
+                        if (this.ds_pool_counters[_code] === workers[workers.length - 1]) {
+                            this.ds_pool_counters[_code] = workers[0];
                             selected_q = w;
                             this.ds_pool_counters[_code] = w;
                             break;
+                        } else {
+                            if (this.ds_pool_counters[_code] === w) {
+                                continue;
+                            }
+                            if (w > this.ds_pool_counters[_code]) {
+                                selected_q = w;
+                                this.ds_pool_counters[_code] = w;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
+
         const pool_queue = `${this.chain}:ds_pool:${selected_q}`;
         if (this.ch_ready) {
             this.ch.sendToQueue(pool_queue, Buffer.from(JSON.stringify(trace)), {headers});
@@ -718,6 +756,7 @@ export default class MainDSWorker extends HyperionWorker {
             hLog(e.message);
             error = e.message;
         }
+        row['ds_error'] = true;
         process.send({
             event: 'ds_error',
             data: {
@@ -771,12 +810,6 @@ export default class MainDSWorker extends HyperionWorker {
         }
     }
 
-    async processDynamicTokenParsers(data) {
-        if (data.code === 'simpleassets') {
-            console.log(data);
-        }
-    }
-
     pushToDeltaStreamingQueue(payload, jsonRow) {
         if (this.allowStreaming && this.conf.features.streaming.deltas) {
             this.ch.publish('', this.chain + ':stream', payload, {
@@ -820,29 +853,36 @@ export default class MainDSWorker extends HyperionWorker {
     deltaStructHandlers = {
 
         "contract_row": async (payload, block_num, block_ts, row) => {
-            if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
+            if (this.conf.indexer.abi_scan_mode) {
+                return false;
+            }
+
+            if (this.conf.features.index_all_deltas ||
+                (payload.code === this.conf.settings.eosio_alias || payload.table === 'accounts')) {
+
                 payload['@timestamp'] = block_ts;
                 payload['present'] = row.present;
                 payload['block_num'] = block_num;
-                if (this.conf.features.index_all_deltas || (payload.code === this.conf.settings.eosio_alias || payload.table === 'accounts')) {
-                    try {
-                        if (this.checkDeltaBlacklist(payload)) return false;
-                        if (this.filters.action_whitelist.size > 0) {
-                            if (!this.checkDeltaWhitelist(payload)) return false;
-                        }
-                        const jsonRow = await this.processContractRowNative(payload, block_num);
-                        if (jsonRow) {
-                            if (await this.processTableDelta(jsonRow)) {
-                                if (!this.conf.indexer.disable_indexing && this.conf.features.index_deltas) {
-                                    const payload = Buffer.from(JSON.stringify(jsonRow));
-                                    this.pushToDeltaQueue(payload, block_num);
-                                    this.temp_delta_counter++;
-                                    this.pushToDeltaStreamingQueue(payload, jsonRow);
-                                }
-                            }
-                        }
-                    } catch (e) {
-                        hLog(`Contract row processing error: ${e.message}`);
+
+                // check delta blacklist chain::code::table
+                if (this.checkDeltaBlacklist(payload)) {
+                    return false;
+                }
+
+                // check delta whitelist chain::code::table
+                if (this.filters.delta_whitelist.size > 0) {
+                    if (!this.checkDeltaWhitelist(payload)) {
+                        return false;
+                    }
+                }
+
+                const jsonRow = await this.processContractRowNative(payload, block_num);
+                if (jsonRow && await this.processTableDelta(jsonRow)) {
+                    if (!this.conf.indexer.disable_indexing && this.conf.features.index_deltas) {
+                        const payload = Buffer.from(JSON.stringify(jsonRow));
+                        this.pushToDeltaQueue(payload, block_num);
+                        this.temp_delta_counter++;
+                        this.pushToDeltaStreamingQueue(payload, jsonRow);
                     }
                 }
             }
@@ -936,42 +976,44 @@ export default class MainDSWorker extends HyperionWorker {
         // },
 
         // Deferred Transactions
-        // "generated_transaction": async (generated_transaction: any, block_num, block_ts, row) => {
-        //     if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
-        //         console.log(`----- generated_transaction -----`);
-        //         const unpackedTrx = this.api.deserializeTransaction(Buffer.from(generated_transaction.packed_trx, 'hex'));
-        //         for (const action of unpackedTrx.actions) {
-        //             const act_data = await this.deserializeActionAtBlockNative(action, block_num);
-        //             if (act_data) {
-        //                 action.data = act_data;
-        //             }
-        //         }
-        //         const genTrx = {
-        //             sender: generated_transaction.sender,
-        //             sender_id: generated_transaction.sender_id,
-        //             payer: generated_transaction.payer,
-        //             trx_id: generated_transaction.trx_id,
-        //             actions: unpackedTrx.actions
-        //         };
-        //         console.log(genTrx);
-        //         console.log(`---------------------------------`);
-        //     }
-        // },
+        "generated_transaction": async (generated_transaction: any, block_num, block_ts) => {
+            if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
+                const unpackedTrx = this.api.deserializeTransaction(Buffer.from(generated_transaction.packed_trx, 'hex'));
+                for (const action of unpackedTrx.actions) {
+                    const act_data = await this.deserializeActionAtBlockNative(action, block_num);
+                    if (act_data) {
+                        action.data = act_data;
+                    }
+                }
+                this.pushToIndexQueue({
+                    '@timestamp': block_ts,
+                    block_num: block_num,
+                    sender: generated_transaction.sender,
+                    sender_id: generated_transaction.sender_id,
+                    payer: generated_transaction.payer,
+                    trx_id: generated_transaction.trx_id.toLowerCase(),
+                    actions: unpackedTrx.actions,
+                    packed_trx: generated_transaction.packed_trx
+                }, 'generated_transaction');
+            }
+        },
 
 
         // Account resource updates
         "resource_limits": async (resource_limits, block_num, block_ts) => {
-            const cpu = parseInt(resource_limits.cpu_weight);
-            const net = parseInt(resource_limits.net_weight);
-            this.pushToIndexQueue({
-                block_num: block_num,
-                '@timestamp': block_ts,
-                owner: resource_limits.owner,
-                ram_bytes: parseInt(resource_limits.ram_bytes),
-                cpu_weight: cpu,
-                net_weight: net,
-                total_weight: cpu + net
-            }, 'resource_limits');
+            if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
+                const cpu = parseInt(resource_limits.cpu_weight);
+                const net = parseInt(resource_limits.net_weight);
+                this.pushToIndexQueue({
+                    block_num: block_num,
+                    '@timestamp': block_ts,
+                    owner: resource_limits.owner,
+                    ram_bytes: parseInt(resource_limits.ram_bytes),
+                    cpu_weight: cpu,
+                    net_weight: net,
+                    total_weight: cpu + net
+                }, 'resource_limits');
+            }
         },
 
         // "resource_limits_config": async (resource_limits_config, block_num, block_ts, row) => {
@@ -983,34 +1025,35 @@ export default class MainDSWorker extends HyperionWorker {
         // },
 
         "resource_usage": async (resource_usage, block_num, block_ts, row) => {
+            if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
+                const net_used = parseInt(resource_usage.net_usage[1].consumed);
+                const net_total = parseInt(resource_usage.net_usage[1].value_ex);
+                let net_pct = 0.0;
+                if (net_total > 0) {
+                    net_pct = net_used / net_total;
+                }
 
-            const net_used = parseInt(resource_usage.net_usage[1].consumed);
-            const net_total = parseInt(resource_usage.net_usage[1].value_ex);
-            let net_pct = 0.0;
-            if (net_total > 0) {
-                net_pct = net_used / net_total;
-            }
+                const cpu_used = parseInt(resource_usage.cpu_usage[1].consumed);
+                const cpu_total = parseInt(resource_usage.cpu_usage[1].value_ex);
+                let cpu_pct = 0.0;
+                if (cpu_total > 0) {
+                    cpu_pct = cpu_used / cpu_total;
+                }
 
-            const cpu_used = parseInt(resource_usage.cpu_usage[1].consumed);
-            const cpu_total = parseInt(resource_usage.cpu_usage[1].value_ex);
-            let cpu_pct = 0.0;
-            if (cpu_total > 0) {
-                cpu_pct = cpu_used / cpu_total;
+                const payload = {
+                    block_num: block_num,
+                    '@timestamp': block_ts,
+                    owner: resource_usage.owner,
+                    net_used: net_used,
+                    net_total: net_total,
+                    net_pct: net_pct,
+                    cpu_used: cpu_used,
+                    cpu_total: cpu_total,
+                    cpu_pct: cpu_pct,
+                    ram: parseInt(resource_usage.ram_usage[1])
+                }
+                this.pushToIndexQueue(payload, 'resource_usage');
             }
-
-            const payload = {
-                block_num: block_num,
-                '@timestamp': block_ts,
-                owner: resource_usage.owner,
-                net_used: net_used,
-                net_total: net_total,
-                net_pct: net_pct,
-                cpu_used: cpu_used,
-                cpu_total: cpu_total,
-                cpu_pct: cpu_pct,
-                ram: parseInt(resource_usage.ram_usage[1])
-            }
-            this.pushToIndexQueue(payload, 'resource_usage');
         },
 
         // Global Chain configuration update
@@ -1047,10 +1090,22 @@ export default class MainDSWorker extends HyperionWorker {
 
     async processDeltas(deltas, block_num, block_ts) {
         const deltaStruct = extractDeltaStruct(deltas);
+
+        // if(deltaStruct['account']) {
+        //     console.log(`------ block: ${block_num} ---------`);
+        // }
+
         for (const key in deltaStruct) {
             if (this.deltaStructHandlers[key] && deltaStruct.hasOwnProperty(key)) {
+
+                if (this.conf.indexer.abi_scan_mode && key !== 'account') {
+                    continue;
+                }
+
                 if (deltaStruct[key].length > 0) {
-                    const tRef = process.hrtime.bigint();
+
+                    // const tRef = process.hrtime.bigint();
+
                     for (const row of deltaStruct[key]) {
                         const data = this.deserializeNative(key, row.data);
                         try {
@@ -1059,10 +1114,12 @@ export default class MainDSWorker extends HyperionWorker {
                             hLog(`Delta struct deserialization error: ${e.message}`);
                         }
                     }
-                    const tPerRow = Number((process.hrtime.bigint() - tRef)) / 1000000 / deltaStruct[key].length;
-                    if (tPerRow > 25.0) {
-                        hLog(`[WARNING] ${key} processing took ${tPerRow.toFixed(2)} ms/row on block ${block_num} (total: ${deltaStruct[key].length} rows)`);
-                    }
+
+                    // console.log(`${key} => ${deltaStruct[key].length} (${Number((process.hrtime.bigint() - tRef)) / 1000000}ms)`);
+                    // const tPerRow = Number((process.hrtime.bigint() - tRef)) / 1000000 / deltaStruct[key].length;
+                    // if (tPerRow > 25.0) {
+                    //     hLog(`[WARNING] ${key} processing took ${tPerRow.toFixed(2)} ms/row on block ${block_num} (total: ${deltaStruct[key].length} rows)`);
+                    // }
                 }
             }
         }
@@ -1089,7 +1146,7 @@ export default class MainDSWorker extends HyperionWorker {
             try {
                 return AbiEOS.bin_to_json(_action.account, actionType, Buffer.from(_action.data, 'hex'));
             } catch (e) {
-                hLog(`deserializeActionAtBlockNative: ${e.message}`);
+                debugLog(`deserializeActionAtBlockNative: ${e.message}`);
             }
         }
         return null;
@@ -1288,13 +1345,29 @@ export default class MainDSWorker extends HyperionWorker {
             }
         };
 
+        this.tableHandlers['simpleassets:sassets'] = async (delta) => {
+            if (delta.data) {
+                if (delta.data.mdata) {
+                    delta['@sassets'] = {
+                        mdata_hash: createHash('sha256')
+                            .update(delta.data.mdata)
+                            .digest()
+                            .toString('hex'),
+                        author: delta.data.author,
+                        id: delta.data.id,
+                        category: delta.data.category
+                    }
+                }
+            }
+        }
+
         this.tableHandlers['*:accounts'] = async (delta) => {
 
             if (!delta.data) {
                 // attempt forced deserialization
                 if (delta.value.length === 32) {
                     try {
-                        hLog(`Attempting forced deserialization for ${delta['code']}::accounts`);
+                        debugLog(`Attempting forced deserialization for ${delta['code']}::accounts`);
                         const sb = new Serialize.SerialBuffer({
                             textDecoder: new TextDecoder(),
                             textEncoder: new TextEncoder(),

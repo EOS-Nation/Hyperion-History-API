@@ -6,6 +6,7 @@ import {SearchService} from '../services/search.service';
 import {AccountService} from '../services/account.service';
 import {faSearch} from '@fortawesome/free-solid-svg-icons/faSearch';
 import {ChainService} from '../services/chain.service';
+import {Title} from '@angular/platform-browser';
 
 @Component({
   selector: 'app-search-results',
@@ -34,7 +35,7 @@ export class SearchResultsComponent implements OnInit {
     public chainData: ChainService
   ) {
     this.searchForm = this.formBuilder.group({
-      search_field: ['', Validators.required]
+      search_field: ['']
     });
     this.filteredAccounts = [];
 
@@ -56,10 +57,9 @@ export class SearchResultsComponent implements OnInit {
 
   async submit() {
     if (!this.searchForm.valid) {
-      return;
+      return true;
     }
     const searchText = this.searchForm.get('search_field').value;
-    this.searchForm.reset();
     const status = this.searchService.submitSearch(searchText, this.filteredAccounts);
     if (!status) {
       this.err = 'no results for ' + searchText;

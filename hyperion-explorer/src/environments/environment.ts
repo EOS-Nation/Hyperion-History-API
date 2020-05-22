@@ -4,8 +4,8 @@
 
 export const environment = {
   production: false,
-  eosioNodeUrl: 'https://wax.eosrio.io',
-  hyperionApiUrl: 'https://wax.eosrio.io',
+  eosioNodeUrl: '',
+  hyperionApiUrl: '',
   systemContract: 'eosio',
   userResourcesTable: 'userres'
 };

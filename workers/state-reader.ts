@@ -253,7 +253,9 @@ export default class StateReader extends HyperionWorker {
                 // NORMAL OPERATION MODE
                 if (process.env.worker_role) {
                     const res = deserialize('result', data, this.txEnc, this.txDec, this.types)[1];
+
                     if (res['this_block']) {
+
                         const blk_num = res['this_block']['block_num'];
                         const lib = res['last_irreversible'];
 
@@ -423,8 +425,8 @@ export default class StateReader extends HyperionWorker {
     private async handleFork(data: any) {
         const this_block = data['this_block'];
         await this.logForkEvent(this_block['block_num'], this.local_block_num, this_block['block_id']);
-        console.log(`Handling fork event: new block ${this_block['block_num']} has id ${this_block['block_id']}`);
-        console.log(`Removing indexed data from ${this_block['block_num']} to ${this.local_block_num}`);
+        hLog(`Handling fork event: new block ${this_block['block_num']} has id ${this_block['block_id']}`);
+        hLog(`Removing indexed data from ${this_block['block_num']} to ${this.local_block_num}`);
         const searchBody = {
             query: {
                 bool: {
@@ -443,6 +445,7 @@ export default class StateReader extends HyperionWorker {
     }
 
     private async logForkEvent(starting_block, ending_block, new_id) {
+        process.send({event: 'fork_event', data: {starting_block, ending_block, new_id}});
         await this.client.index({
             index: this.chain + '-logs',
             body: {
