@@ -76,6 +76,7 @@ interface ApiLimits {
 }
 
 interface ApiConfigs {
+    custom_core_token: string;
     chain_api_error_log?: boolean;
     chain_api?: string;
     push_api?: string;
