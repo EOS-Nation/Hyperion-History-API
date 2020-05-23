@@ -58,7 +58,7 @@ export default class MainDSWorker extends HyperionWorker {
 
     autoBlacklist: Map<string, any[]> = new Map();
 
-    lastSelectedWorker = 0;
+    lastSelectedWorker = -1;
 
     constructor() {
 
@@ -387,7 +387,7 @@ export default class MainDSWorker extends HyperionWorker {
         // round robin option
         if (this.conf.scaling.routing_mode === 'round_robin') {
             this.lastSelectedWorker++;
-            if (this.lastSelectedWorker == this.conf.scaling.ds_pool_size) {
+            if (this.lastSelectedWorker === this.conf.scaling.ds_pool_size) {
                 this.lastSelectedWorker = 0;
             }
             selected_q = this.lastSelectedWorker;
