@@ -96,7 +96,7 @@ class HyperionApiServer {
                 fastify_rate_limit: api_rate_limit,
                 fastify_redis: this.manager.conn.redis,
                 fastify_eosjs: this.manager,
-            });
+            }, true);
         } else {
             registerPlugins(this.fastify, {
                 fastify_elasticsearch: {
@@ -105,7 +105,7 @@ class HyperionApiServer {
                 fastify_oas: generateOpenApiConfig(this.manager.config),
                 fastify_redis: this.manager.conn.redis,
                 fastify_eosjs: this.manager,
-            });
+            }, false);
         }
 
         this.addGenericTypeParsing();
