@@ -119,7 +119,6 @@ export class HyperionMaster {
     private range_completed = false;
     private head: number;
     private starting_block: number;
-    private shutdownTimer: Timeout;
     private idle_count = 0;
     private auto_stop = 0;
 
@@ -136,8 +135,14 @@ export class HyperionMaster {
     private wsRouterWorker: cluster.Worker;
     private liveBlockQueue: AsyncQueue<any>;
     private readingPaused = false;
+
+    // Hyperion Hub Socket
     private hub: SocketIOClient.Socket;
 
+    // Timers
+    private contractMonitoringInterval: Timeout;
+    private queueMonitoringInterval: Timeout;
+    private shutdownTimer: Timeout;
 
     constructor() {
         const cm = new ConfigurationModule();
@@ -182,6 +187,8 @@ export class HyperionMaster {
                         event: 'initialize_abi',
                         data: msg.data
                     });
+                    this.monitorIndexingQueues();
+                    this.startContractMonitoring();
                 }
             },
             'router_ready': () => {
@@ -1126,31 +1133,33 @@ export class HyperionMaster {
     }
 
     private startContractMonitoring() {
-        // Monitor Global Contract Usage
-        setInterval(() => {
+        if (!this.contractMonitoringInterval) {
+            // Monitor Global Contract Usage
+            this.contractMonitoringInterval = setInterval(() => {
 
-            // const t0 = process.hrtime.bigint();
-            this.updateWorkerAssignments();
-            // const t1 = process.hrtime.bigint();
+                // const t0 = process.hrtime.bigint();
+                this.updateWorkerAssignments();
+                // const t1 = process.hrtime.bigint();
 
-            // hLog('----------- Usage Report ----------');
-            // hLog(`Total Hits: ${this.totalContractHits}`);
-            // hLog(`Update time: ${parseInt((t1 - t0).toString()) / 1000000} ms`);
-            // hLog(this.globalUsageMap);
-            // hLog('-----------------------------------');
+                // hLog('----------- Usage Report ----------');
+                // hLog(`Total Hits: ${this.totalContractHits}`);
+                // hLog(`Update time: ${parseInt((t1 - t0).toString()) / 1000000} ms`);
+                // hLog(this.globalUsageMap);
+                // hLog('-----------------------------------');
 
-            // update on deserializers
-            for (const w of this.workerMap) {
-                if (w.worker_role === 'deserializer') {
-                    w.wref.send({
-                        event: 'update_pool_map',
-                        data: this.globalUsageMap
-                    });
+                // update on deserializers
+                for (const w of this.workerMap) {
+                    if (w.worker_role === 'deserializer') {
+                        w.wref.send({
+                            event: 'update_pool_map',
+                            data: this.globalUsageMap
+                        });
+                    }
                 }
-            }
 
-            // clearUsageMap();
-        }, 5000);
+                // clearUsageMap();
+            }, 5000);
+        }
     }
 
     private async checkQueues(autoscaleConsumers, limit) {
@@ -1165,6 +1174,7 @@ export class HyperionMaster {
             if (queue) {
                 if (!testedQueues.has(queue)) {
                     testedQueues.add(queue);
+
                     const size = await this.manager.checkQueueSize(queue);
 
 
@@ -1234,15 +1244,17 @@ export class HyperionMaster {
     }
 
     private monitorIndexingQueues() {
-        const limit = this.conf.scaling.auto_scale_trigger;
-        const autoscaleConsumers = {};
-        this.checkQueues(autoscaleConsumers, limit).catch(console.log);
-        if (!this.conf.scaling.polling_interval) {
-            this.conf.scaling.polling_interval = 20000;
+        if (!this.queueMonitoringInterval) {
+            const limit = this.conf.scaling.auto_scale_trigger;
+            const autoscaleConsumers = {};
+            this.checkQueues(autoscaleConsumers, limit).catch(console.log);
+            if (!this.conf.scaling.polling_interval) {
+                this.conf.scaling.polling_interval = 20000;
+            }
+            this.queueMonitoringInterval = setInterval(async () => {
+                await this.checkQueues(autoscaleConsumers, limit);
+            }, this.conf.scaling.polling_interval);
         }
-        setInterval(async () => {
-            await this.checkQueues(autoscaleConsumers, limit);
-        }, this.conf.scaling.polling_interval);
     }
 
     private onPm2Stop() {
@@ -1649,8 +1661,6 @@ export class HyperionMaster {
             }
         }
 
-        this.startContractMonitoring();
-        this.monitorIndexingQueues();
         this.onPm2Stop();
 
         if (this.conf.hub) {
