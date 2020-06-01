@@ -179,10 +179,10 @@ class HyperionApiServer {
     async fetchChainLogo() {
         try {
             if (this.conf.api.chain_logo_url && this.conf.api.enable_explorer) {
-                console.log(`Downloading chain logo from ${this.conf.api.chain_logo_url}...`);
-                const chainLogo = await got(this.conf.api.chain_logo_url);
-                const path = join(__dirname, '..', 'hyperion-explorer', 'dist', 'assets', this.chain + '_logo.png');
-                writeFileSync(path, chainLogo.rawBody);
+                // console.log(`Downloading chain logo from ${this.conf.api.chain_logo_url}...`);
+                // const chainLogo = await got(this.conf.api.chain_logo_url);
+                // const path = join(__dirname, '..', 'hyperion-explorer', 'dist', 'assets', this.chain + '_logo.png');
+                // writeFileSync(path, chainLogo.rawBody);
                 this.conf.api.chain_logo_url = 'https://' + this.conf.api.server_name + '/v2/explore/assets/' + this.chain + '_logo.png';
             }
         } catch (e) {
