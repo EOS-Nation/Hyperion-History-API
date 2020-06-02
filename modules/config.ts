@@ -76,6 +76,10 @@ export class ConfigurationModule {
                     this.filters.delta_whitelist.add(d);
                 });
             }
+
+            if (!this.config.whitelists.root_only) {
+                this.config.whitelists.root_only = false;
+            }
         }
     }
 
