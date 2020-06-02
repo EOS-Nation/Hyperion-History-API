@@ -1,4 +1,8 @@
 export interface ScalingConfigs {
+    polling_interval: number;
+    resume_trigger: number;
+    max_queue_limit: number;
+    block_queue_limit: number;
     routing_mode: string;
     batch_size: number;
     queue_limit: number;
@@ -13,6 +17,8 @@ export interface ScalingConfigs {
 }
 
 export interface MainSettings {
+    ds_profiling: boolean;
+    max_ws_payload_kb: number;
     ipc_debug_rate?: number;
     bp_monitoring?: boolean;
     preview: boolean;
@@ -38,6 +44,7 @@ export interface IndexerConfigs {
     abi_scan_mode: boolean;
     fetch_block: boolean;
     fetch_traces: boolean;
+    fetch_deltas: boolean;
     disable_reading: boolean;
     disable_indexing: boolean;
     process_deltas: boolean;
@@ -88,6 +95,7 @@ interface ApiConfigs {
     server_name: string;
     provider_name: string;
     provider_url: string;
+    provider_logo: string;
     chain_logo_url: string;
     enable_caching: boolean,
     cache_life: number;
@@ -95,7 +103,14 @@ interface ApiConfigs {
     limits: ApiLimits;
 }
 
+interface HyperionHubConfigs {
+    production: boolean;
+    publisher_key: string;
+    inform_url: string;
+}
+
 export interface HyperionConfig {
+    hub: HyperionHubConfigs;
     settings: MainSettings;
     scaling: ScalingConfigs;
     indexer: IndexerConfigs;
@@ -128,7 +143,11 @@ export interface HyperionConfig {
         },
         index_deltas: boolean,
         index_transfer_memo: boolean,
-        index_all_deltas: boolean
+        index_all_deltas: boolean,
+        deferred_trx: boolean,
+        failed_trx: boolean,
+        resource_usage: boolean,
+        resource_limits: boolean,
     };
 
     prefetch: {

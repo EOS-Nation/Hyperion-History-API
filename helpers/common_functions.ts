@@ -1,8 +1,22 @@
 import {ApiResponse, Client} from "@elastic/elasticsearch";
 import {Serialize} from "../addons/eosjs-native";
+import {existsSync} from "fs";
 
-const config = require(`${process.env.CONFIG_JSON}`);
-const CHAIN = config.settings.chain;
+let config;
+const conf_path = `${process.env.CONFIG_JSON}`;
+if (existsSync(conf_path)) {
+    try {
+        config = require(conf_path);
+    } catch (e) {
+        console.log(e.message);
+        process.exit(1);
+    }
+}
+
+if (!config) {
+    console.log(`Configuration not found: ${conf_path}`);
+    process.exit(1);
+}
 
 function getLastResult(results: ApiResponse) {
     if (results.body.hits?.hits?.length > 0) {

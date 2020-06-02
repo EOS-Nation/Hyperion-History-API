@@ -395,7 +395,7 @@ export default class DSPoolWorker extends HyperionWorker {
 
     async processTraces(transaction_trace, extra) {
         const {cpu_usage_us, net_usage_words} = transaction_trace;
-        const {block_num, producer, ts, inline_count, filtered} = extra;
+        const {block_num, producer, ts, inline_count, filtered, live, signatures} = extra;
 
         if (transaction_trace.status === 0) {
             let action_count = 0;
@@ -411,7 +411,8 @@ export default class DSPoolWorker extends HyperionWorker {
                 net_usage_words,
                 ts,
                 inline_count,
-                filtered
+                filtered,
+                signatures
             };
 
             const usageIncluded = {status: false};
@@ -427,7 +428,15 @@ export default class DSPoolWorker extends HyperionWorker {
 
             for (const action_trace of action_traces) {
                 if (action_trace[0] === 'action_trace_v0') {
-                    const ds_status = await this.mLoader.parser.parseAction(this, ts, action_trace[1], trx_data, _actDataArray, _processedTraces, transaction_trace, usageIncluded);
+                    const ds_status = await this.mLoader.parser.parseAction(this,
+                        ts,
+                        action_trace[1],
+                        trx_data,
+                        _actDataArray,
+                        _processedTraces,
+                        transaction_trace,
+                        usageIncluded
+                    );
                     if (ds_status) {
                         this.temp_ds_counter++;
                         action_count++;
@@ -501,7 +510,9 @@ export default class DSPoolWorker extends HyperionWorker {
                 const payload = Buffer.from(JSON.stringify(uniqueAction));
                 this.actionDsCounter++;
                 this.pushToActionsQueue(payload, block_num);
-                this.pushToActionStreamingQueue(payload, uniqueAction);
+                if (live === 'true') {
+                    this.pushToActionStreamingQueue(payload, uniqueAction);
+                }
             }
         }
     }

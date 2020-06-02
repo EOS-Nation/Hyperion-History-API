@@ -31,6 +31,10 @@ export default class StateReader extends HyperionWorker {
     private currentIdx = 1;
     private receivedFirstBlock = false;
     private local_lib = 0;
+    private delay_block_processing = false;
+    private block_processing_delay = 100;
+
+    // private tempBlockSizeSum = 0;
 
     constructor() {
         super();
@@ -43,14 +47,28 @@ export default class StateReader extends HyperionWorker {
             this.distribute(tasks, callback);
         }, this.conf.prefetch.read);
 
-        this.blockReadingQueue = cargo((tasks, callback) => {
+        this.blockReadingQueue = cargo((tasks, next) => {
             this.processIncomingBlocks(tasks).then(() => {
-                callback();
+                if (this.delay_block_processing) {
+                    setTimeout(() => {
+                        next();
+                    }, this.block_processing_delay);
+                } else {
+                    next();
+                }
             }).catch((err) => {
                 console.log('FATAL ERROR READING BLOCKS', err);
                 process.exit(1);
             })
         }, this.conf.prefetch.read);
+
+        if (this.conf.indexer.abi_scan_mode) {
+            this.conf.indexer.fetch_deltas = true;
+        }
+
+        if (typeof this.conf.indexer.fetch_deltas === 'undefined') {
+            this.conf.indexer.fetch_deltas = true;
+        }
 
         this.baseRequest = {
             max_messages_in_flight: this.conf.prefetch.read,
@@ -58,8 +76,15 @@ export default class StateReader extends HyperionWorker {
             irreversible_only: false,
             fetch_block: this.conf.indexer.fetch_block,
             fetch_traces: this.conf.indexer.fetch_traces,
-            fetch_deltas: true
+            fetch_deltas: this.conf.indexer.fetch_deltas
         };
+
+        // setInterval(() => {
+        //     if (this.tempBlockSizeSum > 0) {
+        //         hLog(`Block reading rate: ${((this.tempBlockSizeSum / 10) / 1000000).toFixed(2)} MB/s`);
+        //         this.tempBlockSizeSum = 0;
+        //     }
+        // }, 10000);
     }
 
     distribute(data, cb) {
@@ -176,6 +201,22 @@ export default class StateReader extends HyperionWorker {
                 }
                 break;
             }
+            case 'pause': {
+                this.allowRequests = false;
+                break;
+            }
+            case 'resume': {
+                this.allowRequests = true;
+                if (this.pendingRequest) {
+                    this.processPending();
+                }
+                break;
+            }
+            case 'set_delay': {
+                this.delay_block_processing = msg.data.state;
+                this.block_processing_delay = msg.data.delay;
+                break;
+            }
             case 'stop': {
                 if (this.isLiveReader) {
                     console.log('[LIVE READER] Closing Websocket');
@@ -245,6 +286,7 @@ export default class StateReader extends HyperionWorker {
     }
 
     private async onMessage(data: any) {
+        // this.tempBlockSizeSum += data.length;
         if (this.abi) {
 
             // NORMAL OPERATION MODE WITH ABI PRESENT
@@ -278,7 +320,12 @@ export default class StateReader extends HyperionWorker {
                             // LIVE READER MODE
                             if (blk_num !== this.local_block_num + 1) {
                                 hLog(`Expected: ${this.local_block_num + 1}, received: ${blk_num}`);
-                                await this.handleFork(res);
+                                try {
+                                    await this.handleFork(res);
+                                } catch (e) {
+                                    hLog('Failed to handle fork during live reading!');
+                                    hLog(e.message);
+                                }
                             } else {
                                 this.local_block_num = blk_num;
                             }
@@ -435,13 +482,12 @@ export default class StateReader extends HyperionWorker {
             }
         };
         const indexName = this.chain + '-delta-' + this.conf.settings.index_version + '-*';
-        const {body} = await this.client.deleteByQuery({
+        await this.client.deleteByQuery({
             index: indexName,
             refresh: true,
             body: searchBody
         });
-        console.log(body);
-        console.log(`Live reading resumed!`);
+        hLog(`Live reading resumed!`);
     }
 
     private async logForkEvent(starting_block, ending_block, new_id) {
@@ -471,7 +517,7 @@ export default class StateReader extends HyperionWorker {
                 checkArr.push(this.manager.checkQueueSize(q));
             }
             Promise.all(checkArr).then(data => {
-                if (data.some(el => el > this.conf.scaling.queue_limit)) {
+                if (data.some(el => el > this.conf.scaling.block_queue_limit)) {
                     this.allowRequests = false;
                 } else {
                     this.allowRequests = true;

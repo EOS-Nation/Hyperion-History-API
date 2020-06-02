@@ -96,7 +96,7 @@ class HyperionApiServer {
                 fastify_rate_limit: api_rate_limit,
                 fastify_redis: this.manager.conn.redis,
                 fastify_eosjs: this.manager,
-            });
+            }, true);
         } else {
             registerPlugins(this.fastify, {
                 fastify_elasticsearch: {
@@ -105,7 +105,7 @@ class HyperionApiServer {
                 fastify_oas: generateOpenApiConfig(this.manager.config),
                 fastify_redis: this.manager.conn.redis,
                 fastify_eosjs: this.manager,
-            });
+            }, false);
         }
 
         this.addGenericTypeParsing();
@@ -171,7 +171,7 @@ class HyperionApiServer {
             });
             console.log(`server listening on ${(this.fastify.server.address() as AddressInfo).port}`);
         } catch (err) {
-            this.fastify.log.error(err);
+            console.log(err);
             process.exit(1)
         }
     }
@@ -179,10 +179,10 @@ class HyperionApiServer {
     async fetchChainLogo() {
         try {
             if (this.conf.api.chain_logo_url && this.conf.api.enable_explorer) {
-                console.log(`Downloading chain logo from ${this.conf.api.chain_logo_url}...`);
-                const chainLogo = await got(this.conf.api.chain_logo_url);
-                const path = join(__dirname, '..', 'hyperion-explorer', 'dist', 'assets', this.chain + '_logo.png');
-                writeFileSync(path, chainLogo.rawBody);
+                // console.log(`Downloading chain logo from ${this.conf.api.chain_logo_url}...`);
+                // const chainLogo = await got(this.conf.api.chain_logo_url);
+                // const path = join(__dirname, '..', 'hyperion-explorer', 'dist', 'assets', this.chain + '_logo.png');
+                // writeFileSync(path, chainLogo.rawBody);
                 this.conf.api.chain_logo_url = 'https://' + this.conf.api.server_name + '/v2/explore/assets/' + this.chain + '_logo.png';
             }
         } catch (e) {
