@@ -50,7 +50,9 @@
   },
   "whitelists": {
     "actions": [],
-    "deltas": []
+    "deltas": [],
+    "max_depth": 10,
+    "root_only": false
   },
   "scaling": {
     "readers":            1,

@@ -61,7 +61,7 @@ function buildTableProposalsBulk(payloads, messageMap) {
 
 function buildTableAccountsBulk(payloads, messageMap) {
     return flatMap(payloads, (payload, body) => {
-        const id = `${body.code}-${body.scope}-${body.primary_key}`;
+        const id = `${body.code}-${body.scope}-${body.symbol}`;
         messageMap.set(id, _.omit(payload, ['content']));
         return makeScriptedOp(id, body);
     });
@@ -69,7 +69,7 @@ function buildTableAccountsBulk(payloads, messageMap) {
 
 function buildTableVotersBulk(payloads, messageMap) {
     return flatMap(payloads, (payload, body) => {
-        const id = `${body.primary_key}`;
+        const id = `${body.voter}`;
         messageMap.set(id, _.omit(payload, ['content']));
         return makeScriptedOp(id, body);
     });
@@ -337,18 +337,20 @@ export class ElasticRoutes {
                 // write to remapped indices
                 let payloadBlock = null;
                 const indexMap = {};
+                let pIdx = null;
                 if (indexName === 'action' || indexName === 'delta') {
                     for (const payload of payloads) {
                         const blk = payload.properties.headers?.block_num;
                         if (!payloadBlock) {
                             payloadBlock = blk;
-                            const idx = this.getIndexNameByBlock(blk);
-                            this.addToIndexMap(indexMap, idx, payload);
+                            pIdx = this.getIndexNameByBlock(blk);
+                            this.addToIndexMap(indexMap, pIdx, payload);
                         } else {
-                            if (payloadBlock !== blk) {
-                                const idx = this.getIndexNameByBlock(blk);
-                                this.addToIndexMap(indexMap, idx, payload);
-                            }
+                            this.addToIndexMap(
+                                indexMap,
+                                payloadBlock === blk ? pIdx : this.getIndexNameByBlock(blk),
+                                payload
+                            );
                         }
                     }
                 }
