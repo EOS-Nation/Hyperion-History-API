@@ -75,50 +75,61 @@ export default class HyperionParser extends BaseParser {
 
             const res = ds_msg[1];
             let block, traces = [], deltas = [];
+
             if (res.block && res.block.length) {
 
                 if (worker.conf.settings.ds_profiling) ds_times['signed_block'] = process.hrtime.bigint();
                 block = worker.deserializeNative('signed_block', res.block);
                 if (worker.conf.settings.ds_profiling) ds_times['signed_block'] = process.hrtime.bigint() - ds_times['signed_block'];
 
-
                 if (block === null) {
                     console.log(res);
                     process.exit(1);
                 }
 
-                // verify for whitelisted contracts
-                try {
-                    if (worker.conf.settings.ds_profiling) ds_times['packed_trx'] = process.hrtime.bigint();
-                    if (worker.conf.whitelists && (worker.conf.whitelists.actions.length > 0 || worker.conf.whitelists.deltas.length > 0)) {
-                        allowProcessing = false;
-                        for (const transaction of block.transactions) {
-                            if (transaction.status === 0 && transaction.trx[1] && transaction.trx[1].packed_trx) {
-                                const unpacked_trx = worker.api.deserializeTransaction(Buffer.from(transaction.trx[1].packed_trx, 'hex'));
-                                for (const act of unpacked_trx.actions) {
-                                    if (this.checkWhitelist(act)) {
-                                        allowProcessing = true;
-                                        break;
+                // verify for whitelisted contracts (root actions only)
+                if (worker.conf.whitelists.root_only) {
+                    try {
+
+                        // get time reference for profiling
+                        if (worker.conf.settings.ds_profiling) ds_times['packed_trx'] = process.hrtime.bigint();
+
+                        if (worker.conf.whitelists &&
+                            (worker.conf.whitelists.actions.length > 0 ||
+                                worker.conf.whitelists.deltas.length > 0)) {
+
+                            allowProcessing = false;
+
+                            for (const transaction of block.transactions) {
+                                if (transaction.status === 0 && transaction.trx[1] && transaction.trx[1].packed_trx) {
+                                    const unpacked_trx = worker.api.deserializeTransaction(Buffer.from(transaction.trx[1].packed_trx, 'hex'));
+                                    for (const act of unpacked_trx.actions) {
+                                        if (this.checkWhitelist(act)) {
+                                            allowProcessing = true;
+                                            break;
+                                        }
                                     }
+                                    if (allowProcessing) break;
                                 }
-                                if (allowProcessing) break;
                             }
                         }
+
+                        // store time diff
+                        if (worker.conf.settings.ds_profiling) ds_times['packed_trx'] = process.hrtime.bigint() - ds_times['packed_trx'];
+
+                    } catch (e) {
+                        console.log(e);
+                        allowProcessing = true;
                     }
-                    if (worker.conf.settings.ds_profiling) ds_times['packed_trx'] = process.hrtime.bigint() - ds_times['packed_trx'];
-                } catch (e) {
-                    console.log(e);
-                    allowProcessing = true;
                 }
             }
 
             if (allowProcessing && res['traces'] && res['traces'].length) {
-                try {
-                    if (worker.conf.settings.ds_profiling) ds_times['transaction_trace'] = process.hrtime.bigint();
-                    traces = worker.deserializeNative('transaction_trace[]', res['traces']);
-                    if (worker.conf.settings.ds_profiling) ds_times['transaction_trace'] = process.hrtime.bigint() - ds_times['transaction_trace'];
-                } catch (e) {
-                    console.log(e);
+                if (worker.conf.settings.ds_profiling) ds_times['transaction_trace'] = process.hrtime.bigint();
+                traces = worker.deserializeNative('transaction_trace[]', res['traces']);
+                if (worker.conf.settings.ds_profiling) ds_times['transaction_trace'] = process.hrtime.bigint() - ds_times['transaction_trace'];
+                if (!traces) {
+                    hLog(`[WARNING] transaction_trace[] deserialization failed on block ${res['this_block']['block_num']}`);
                 }
             }
 
@@ -126,6 +137,9 @@ export default class HyperionParser extends BaseParser {
                 if (worker.conf.settings.ds_profiling) ds_times['table_delta'] = process.hrtime.bigint();
                 deltas = worker.deserializeNative('table_delta[]', res['deltas']);
                 if (worker.conf.settings.ds_profiling) ds_times['table_delta'] = process.hrtime.bigint() - ds_times['table_delta'];
+                if (!deltas) {
+                    hLog(`[WARNING] table_delta[] deserialization failed on block ${res['this_block']['block_num']}`);
+                }
             }
 
             if (worker.conf.settings.ds_profiling) {

@@ -180,10 +180,6 @@ export default class MainDSWorker extends HyperionWorker {
         }
     }
 
-    attachActionExtras(self, action) {
-        self.mLoader.processActionData(action);
-    }
-
     sendDsCounterReport() {
         // send ds counters
         if (this.temp_delta_counter > 0) {
@@ -443,7 +439,23 @@ export default class MainDSWorker extends HyperionWorker {
         }
 
         if (this.filters.action_whitelist.size > 0) {
-            if (!this.checkWhitelist(first_action.act)) {
+            let allow = false;
+            let depth = 0;
+            for (const action of trace['action_traces']) {
+                if (this.checkWhitelist(action[1].act)) {
+                    allow = true;
+                    // hLog(`Code: ${action[1].act.account} | Action: ${action[1].act.name} | Depth: ${depth}`);
+                    break;
+                }
+                if (this.conf.whitelists.max_depth) {
+                    if (depth >= this.conf.whitelists.max_depth) {
+                        // hLog(`Max depth reached: ${depth} | Total: ${trace['action_traces'].length} actions`);
+                        break;
+                    }
+                    depth++;
+                }
+            }
+            if (!allow) {
                 return false;
             }
         }
@@ -917,7 +929,7 @@ export default class MainDSWorker extends HyperionWorker {
             headers: {block_num}
         });
         this.delta_emit_idx++;
-        if (this.delta_emit_idx > (this.conf.scaling.indexing_queues * this.conf.scaling.ad_idx_queues)) {
+        if (this.delta_emit_idx > this.conf.scaling.ad_idx_queues) {
             this.delta_emit_idx = 1;
         }
     }
@@ -992,7 +1004,7 @@ export default class MainDSWorker extends HyperionWorker {
             }
         },
 
-        "account": async (account, block_num, block_ts, row, block_id) => {
+        "account": async (account, block_num, block_ts) => {
             if (account['abi'] !== '') {
                 try {
                     const abiHex = account['abi'];
@@ -1013,6 +1025,10 @@ export default class MainDSWorker extends HyperionWorker {
                         actions: abi_actions,
                         tables: abi_tables
                     };
+
+                    // TODO: remove before commit
+                    // console.log(new_abi_object);
+
                     debugLog(`[Worker ${process.env.worker_id}] read ${account['name']} ABI at block ${block_num}`);
                     const q = this.chain + ":index_abis:1";
                     this.preIndexingQueue.push({
@@ -1047,7 +1063,7 @@ export default class MainDSWorker extends HyperionWorker {
             }
         },
 
-        "permission_link": async (link, block_num, block_ts, row, block_id) => {
+        "permission_link": async (link, block_num, block_ts, row) => {
             if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
                 this.pushToIndexQueue({
                     "@timestamp": block_ts,
@@ -1061,8 +1077,21 @@ export default class MainDSWorker extends HyperionWorker {
             }
         },
 
-        "permission": async (perm, block_num, block_ts, row, block_id) => {
+        "permission": async (perm, block_num, block_ts, row) => {
             if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
+
+                if (perm.auth.accounts.length === 0) {
+                    delete perm.auth.accounts;
+                }
+
+                if (perm.auth.keys.length === 0) {
+                    delete perm.auth.keys;
+                }
+
+                if (perm.auth.waits.length === 0) {
+                    delete perm.auth.waits;
+                }
+
                 this.pushToIndexQueue({
                     block_num: block_num,
                     present: row.present,
@@ -1072,15 +1101,14 @@ export default class MainDSWorker extends HyperionWorker {
         },
 
         // "account_metadata": async (account_metadata, block_num, block_ts, row, block_id) => {
-        //     if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas) {
-        //         if (account_metadata.code) {
-        //             hLog(`new code hash ${account_metadata.code.code_hash} on ${account_metadata.name}`);
-        //         }
+        //     console.log(account_metadata);
+        //     if (account_metadata.code) {
+        //         hLog(`new code hash ${account_metadata.code.code_hash} on ${account_metadata.name}`);
         //     }
         // },
 
         // Deferred Transactions
-        "generated_transaction": async (generated_transaction: any, block_num, block_ts, row, block_id) => {
+        "generated_transaction": async (generated_transaction: any, block_num, block_ts) => {
             if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas && this.conf.features.deferred_trx) {
 
                 // check delta blacklist chain::code::table
@@ -1120,7 +1148,7 @@ export default class MainDSWorker extends HyperionWorker {
 
 
         // Account resource updates
-        "resource_limits": async (resource_limits, block_num, block_ts, row, block_id) => {
+        "resource_limits": async (resource_limits, block_num, block_ts) => {
             if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas && this.conf.features.resource_limits) {
                 const cpu = parseInt(resource_limits.cpu_weight);
                 const net = parseInt(resource_limits.net_weight);
@@ -1144,7 +1172,7 @@ export default class MainDSWorker extends HyperionWorker {
         //     hLog(block_num, resource_limits_state);
         // },
 
-        "resource_usage": async (resource_usage, block_num, block_ts, row, block_id) => {
+        "resource_usage": async (resource_usage, block_num, block_ts) => {
             if (!this.conf.indexer.abi_scan_mode && this.conf.indexer.process_deltas && this.conf.features.resource_usage) {
                 const net_used = parseInt(resource_usage.net_usage[1].consumed);
                 const net_total = parseInt(resource_usage.net_usage[1].value_ex);
@@ -1218,7 +1246,6 @@ export default class MainDSWorker extends HyperionWorker {
                 if (deltaStruct[key].length > 0) {
                     for (const row of deltaStruct[key]) {
                         let data = this.deserializeNative(key, row.data);
-
                         if (!data) {
                             try {
                                 data = this.types.get(key).deserialize(
@@ -1259,7 +1286,7 @@ export default class MainDSWorker extends HyperionWorker {
                     return AbiEOS.bin_to_json("0", datatype, array);
                 }
             } catch (e) {
-                hLog(e.message);
+                hLog('deserializeNative >>', datatype,'>>', e.message);
             }
             return null;
         }
@@ -1335,7 +1362,6 @@ export default class MainDSWorker extends HyperionWorker {
         const accountDoc = {
             "code": data['code'],
             "scope": data['scope'],
-            "primary_key": data['primary_key'],
             "block_num": data['block_num'],
             "present": data['present']
         };
@@ -1378,7 +1404,7 @@ export default class MainDSWorker extends HyperionWorker {
             delete delta.data['last_vote_weight'];
             delta['@voters']['proxied_vote_weight'] = parseFloat(delta.data['proxied_vote_weight']);
             delete delta.data['proxied_vote_weight'];
-            delta['@voters']['staked'] = parseInt(delta.data['staked'], 10) / 10000;
+            delta['@voters']['staked'] = parseFloat(delta.data['staked']);
             delete delta.data['staked'];
             if (this.conf.features.tables.voters) {
                 this.storeVoter(delta);
