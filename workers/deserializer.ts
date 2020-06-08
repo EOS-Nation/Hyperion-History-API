@@ -605,7 +605,7 @@ export default class MainDSWorker extends HyperionWorker {
                     valid_from = savedAbi.block;
                 }
 
-                if (savedAbi[field + 's'].includes(type)) {
+                if (savedAbi[field + 's'] && savedAbi[field + 's'].includes(type)) {
                     if (savedAbi.abi_hex) {
                         _status = this.loadAbiHex(contract, savedAbi.block, savedAbi.abi_hex);
                     }
@@ -691,7 +691,7 @@ export default class MainDSWorker extends HyperionWorker {
     async getContractAtBlock(accountName: string, block_num: number, check_action?: string) {
         let savedAbi, abi;
         savedAbi = await this.fetchAbiHexAtBlockElastic(accountName, block_num, true);
-        if (savedAbi === null || !savedAbi.actions.includes(check_action)) {
+        if (savedAbi === null || (savedAbi.actions && !savedAbi.actions.includes(check_action))) {
             savedAbi = await this.getAbiFromHeadBlock(accountName);
             if (!savedAbi) return [null, null];
             abi = savedAbi.abi;
