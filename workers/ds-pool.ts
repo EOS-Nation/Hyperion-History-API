@@ -199,7 +199,7 @@ export default class DSPoolWorker extends HyperionWorker {
             if (!_status) {
                 const savedAbi = await this.fetchAbiHexAtBlockElastic(contract, block_num, false);
                 if (savedAbi) {
-                    if (savedAbi[field + 's'].includes(type)) {
+                    if (savedAbi[field + 's'] && savedAbi[field + 's'].includes(type)) {
                         if (savedAbi.abi_hex) {
                             _status = this.loadAbiHex(contract, savedAbi.block, savedAbi.abi_hex);
                         }
@@ -270,8 +270,7 @@ export default class DSPoolWorker extends HyperionWorker {
         }
         let savedAbi, abi;
         savedAbi = await this.fetchAbiHexAtBlockElastic(accountName, block_num, true);
-        if (savedAbi === null || !savedAbi.actions.includes(check_action)) {
-            // hLog(`no ABI indexed for ${accountName}`);
+        if (savedAbi === null || (savedAbi.actions && !savedAbi.actions.includes(check_action))) {
             savedAbi = await this.getAbiFromHeadBlock(accountName);
             if (!savedAbi) {
                 return null;
